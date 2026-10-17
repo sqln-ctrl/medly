@@ -1,150 +1,154 @@
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
+import { AuthProvider, useAuth } from './src/auth/AuthProvider';
+import {
+  AuthenticatedScreen,
+  CredentialScreen,
+  StatusScreen,
+  WelcomeScreen,
+} from './src/screens/AuthScreens';
 
-type HealthResponse = {
-  status: string;
-  service?: string;
-  checks?: Record<string, { status: string; driver?: string }>;
-};
+type AuthScreen = 'welcome' | 'login' | 'register';
 
-export default function App() {
-  const [healthData, setHealthData] = useState<HealthResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+function AppContent() {
+  const {
+    status,
+    user,
+    sessionError,
+    signIn,
+    createAccount,
+    signOut,
+    retryRestore,
+    startNewSession,
+  } = useAuth();
+  const [screen, setScreen] = useState<AuthScreen>('welcome');
+  const [signOutBusy, setSignOutBusy] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+  const [sessionActionError, setSessionActionError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchHealth = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/health/live`);
-        if (!response.ok) {
-          throw new Error(`Backend request failed: ${response.status}`);
+  const continueToLogin = async () => {
+    setSessionActionError(null);
+    try {
+      await startNewSession();
+      setScreen('login');
+    } catch (error) {
+      setSessionActionError(
+        error instanceof Error ? error.message : 'The saved session could not be cleared.',
+      );
+    }
+  };
+
+  const handleSignOut = async () => {
+    setSignOutBusy(true);
+    setSignOutError(null);
+    try {
+      await signOut();
+      setScreen('welcome');
+    } catch (error) {
+      setSignOutError(
+        error instanceof Error ? error.message : 'Sign out could not be completed.',
+      );
+    } finally {
+      setSignOutBusy(false);
+    }
+  };
+
+  if (status === 'loading') {
+    return (
+      <SafeAreaView style={styles.stateScreen}>
+        <StatusBar style="dark" />
+        <ActivityIndicator size="large" color="#1d4ed8" />
+        <Text style={styles.loadingText}>Restoring your session…</Text>
+      </SafeAreaView>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <StatusScreen
+        title="Couldn't restore your session"
+        message={
+          sessionActionError ??
+          sessionError ??
+          'Check your connection and try again.'
         }
+        primaryLabel="Try again"
+        onPrimary={() => void retryRestore()}
+        secondaryLabel="Sign in instead"
+        onSecondary={() => void continueToLogin()}
+      />
+    );
+  }
 
-        const data = (await response.json()) as HealthResponse;
-        setHealthData(data);
-      } catch (caughtError) {
-        setError(caughtError instanceof Error ? caughtError.message : 'Unknown error');
-      } finally {
-        setLoading(false);
-      }
-    };
+  if (status === 'expired') {
+    return (
+      <StatusScreen
+        title="Your session expired"
+        message={
+          sessionActionError ??
+          'Please sign in again to continue. Your account data remains on the server.'
+        }
+        primaryLabel="Sign in"
+        onPrimary={() => void continueToLogin()}
+      />
+    );
+  }
 
-    fetchHealth();
-  }, []);
+  if (status === 'authenticated' && user) {
+    return (
+      <AuthenticatedScreen
+        busy={signOutBusy}
+        email={user.email}
+        error={signOutError}
+        onSignOut={() => void handleSignOut()}
+      />
+    );
+  }
+
+  if (screen === 'login' || screen === 'register') {
+    const mode = screen;
+    return (
+      <CredentialScreen
+        mode={mode}
+        onBack={() => setScreen('welcome')}
+        onSwitchMode={() => setScreen(mode === 'login' ? 'register' : 'login')}
+        onSubmit={mode === 'login' ? signIn : createAccount}
+      />
+    );
+  }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.eyebrow}>Medly</Text>
-        <Text style={styles.title}>Daily medication tracking</Text>
-        <Text style={styles.subtitle}>
-          A small starter shell for the patient reminder experience.
-        </Text>
+    <WelcomeScreen
+      onLogin={() => setScreen('login')}
+      onRegister={() => setScreen('register')}
+    />
+  );
+}
 
-        {loading ? (
-          <View style={styles.stateRow}>
-            <ActivityIndicator size="small" color="#1d4ed8" />
-            <Text style={styles.stateText}>Checking backend health…</Text>
-          </View>
-        ) : error ? (
-          <View style={styles.alertBox}>
-            <Text style={styles.alertTitle}>Connection issue</Text>
-            <Text style={styles.alertText}>{error}</Text>
-            <Text style={styles.alertText}>API base URL: {API_BASE_URL}</Text>
-          </View>
-        ) : (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Backend status</Text>
-            <Text style={styles.cardText}>{healthData?.status ?? 'unknown'}</Text>
-            <Text style={styles.cardText}>Service: {healthData?.service ?? 'medly-backend'}</Text>
-          </View>
-        )}
-      </ScrollView>
-    </SafeAreaView>
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
+  stateScreen: {
+    alignItems: 'center',
     backgroundColor: '#f8fafc',
-  },
-  container: {
-    flexGrow: 1,
+    flex: 1,
     justifyContent: 'center',
     padding: 24,
   },
-  eyebrow: {
-    color: '#1d4ed8',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1.4,
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#475569',
-    marginBottom: 24,
-    lineHeight: 24,
-  },
-  stateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  stateText: {
-    color: '#0f172a',
-    fontSize: 16,
-  },
-  card: {
-    borderRadius: 16,
-    backgroundColor: '#ffffff',
-    padding: 20,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
-  },
-  cardTitle: {
-    fontSize: 14,
-    fontWeight: '700',
+  loadingText: {
     color: '#334155',
-    textTransform: 'uppercase',
-    marginBottom: 8,
-  },
-  cardText: {
-    color: '#0f172a',
-    fontSize: 18,
-    marginBottom: 6,
-  },
-  alertBox: {
-    backgroundColor: '#fff1f2',
-    borderRadius: 12,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#fecdd3',
-  },
-  alertTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#9f1239',
-    marginBottom: 6,
-  },
-  alertText: {
-    color: '#881337',
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 16,
+    marginTop: 16,
   },
 });
