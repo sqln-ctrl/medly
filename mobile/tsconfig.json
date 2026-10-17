@@ -4,6 +4,7 @@
     "strict": true,
     "allowJs": false,
     "jsx": "react-jsx",
-    "moduleResolution": "node"
+    "moduleResolution": "bundler",
+    "types": ["node"]
   }
 }
