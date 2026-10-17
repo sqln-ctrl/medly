@@ -36,6 +36,21 @@ def test_health_live_allows_expo_web_preflight():
     assert "GET" in response.headers["access-control-allow-methods"]
 
 
+def test_auth_preflight_allows_expo_web_post():
+    response = client.options(
+        "/auth/register",
+        headers={
+            "Origin": "http://localhost:8081",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:8081"
+    assert "POST" in response.headers["access-control-allow-methods"]
+
+
 def test_health_live_rejects_unconfigured_origin():
     response = client.get(
         "/health/live",
@@ -46,7 +61,8 @@ def test_health_live_rejects_unconfigured_origin():
     assert "access-control-allow-origin" not in response.headers
 
 
-def test_health_ready_without_db_config():
+def test_health_ready_without_db_config(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     response = client.get("/health/ready")
 
     assert response.status_code == 200
