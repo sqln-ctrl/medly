@@ -218,43 +218,6 @@ export function StatusScreen({
   );
 }
 
-export function AuthenticatedScreen({
-  email,
-  busy,
-  error,
-  onSignOut,
-}: {
-  email: string;
-  busy: boolean;
-  error: string | null;
-  onSignOut: () => void;
-}) {
-  return (
-    <ScreenFrame>
-      <Text style={styles.eyebrow}>MEDLY</Text>
-      <Text style={styles.title}>You’re signed in.</Text>
-      <Text style={styles.subtitle}>Account: {email}</Text>
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Your account is ready</Text>
-        <Text style={styles.cardText}>
-          Medication tracking screens will be added in the next development slice.
-        </Text>
-      </View>
-      {error ? (
-        <View accessibilityRole="alert" style={styles.errorBox}>
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
-      ) : null}
-      <PrimaryButton
-        disabled={busy}
-        label="Sign out"
-        loading={busy}
-        onPress={onSignOut}
-      />
-    </ScreenFrame>
-  );
-}
-
 function ScreenFrame({ children }: React.PropsWithChildren) {
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -449,23 +412,5 @@ const styles = StyleSheet.create({
     color: '#9f1239',
     fontSize: 14,
     lineHeight: 20,
-  },
-  card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    marginBottom: 12,
-    padding: 20,
-  },
-  cardTitle: {
-    color: '#334155',
-    fontSize: 14,
-    fontWeight: '700',
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
-  cardText: {
-    color: '#475569',
-    fontSize: 16,
-    lineHeight: 24,
   },
 });

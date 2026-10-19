@@ -4,8 +4,8 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { AuthProvider, useAuth } from './src/auth/AuthProvider';
+import { AuthenticatedApp } from './src/screens/AuthenticatedApp';
 import {
-  AuthenticatedScreen,
   CredentialScreen,
   StatusScreen,
   WelcomeScreen,
@@ -99,7 +99,7 @@ function AppContent() {
 
   if (status === 'authenticated' && user) {
     return (
-      <AuthenticatedScreen
+      <AuthenticatedApp
         busy={signOutBusy}
         email={user.email}
         error={signOutError}
