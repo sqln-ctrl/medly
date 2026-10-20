@@ -24,3 +24,7 @@ This application helps patients manage scheduled medications and confirm the dos
 ## Functional scope for Phase 0
 
 The initial repository skeleton must provide a runnable backend and mobile app with a health-check contract that supports a later end-to-end connection.
+
+## Functional scope for Phase 1
+
+The next slice adds authenticated patient profile management and medication tracking. The backend must allow a signed-in patient to read or update their timezone, list medications, and create medication records bound to their patient account. Every patient-scoped endpoint must enforce ownership checks and maintain the instruction text exactly as provided.
