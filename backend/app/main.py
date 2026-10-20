@@ -10,6 +10,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.auth_routes import router as auth_router
 from app.db import engine
+from app.patient_routes import router as patient_router
 from app.rate_limit import limiter
 
 app = FastAPI(title="Medly API", version="0.1.0")
@@ -31,6 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router)
+app.include_router(patient_router)
 
 
 @app.get("/")

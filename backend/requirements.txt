@@ -13,3 +13,4 @@ slowapi==0.1.10
 aiosqlite==0.22.1
 email-validator==2.3.0
 python-dotenv==1.2.4
+tzdata==2025.2
