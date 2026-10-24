@@ -17,6 +17,7 @@ function AppContent() {
   const {
     status,
     user,
+    accessToken,
     sessionError,
     signIn,
     createAccount,
@@ -97,9 +98,10 @@ function AppContent() {
     );
   }
 
-  if (status === 'authenticated' && user) {
+  if (status === 'authenticated' && user && accessToken) {
     return (
       <AuthenticatedApp
+        accessToken={accessToken}
         busy={signOutBusy}
         email={user.email}
         error={signOutError}

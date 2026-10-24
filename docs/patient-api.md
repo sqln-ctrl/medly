@@ -45,7 +45,7 @@ Request:
 }
 ```
 
-Creates a medication row associated with the current patient. Medication instructions are stored as provided and are never rewritten by the backend.
+Creates a medication row associated with the current patient. The mobile app sends the medication name and instruction text to this endpoint, then loads the patient's saved medication list from `GET /medications`. Medication instructions are stored as provided and are never rewritten by the backend.
 
 ## Reminder schedules
 

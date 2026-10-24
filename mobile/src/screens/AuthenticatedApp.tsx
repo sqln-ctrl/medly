@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -11,14 +12,14 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
-type Medication = {
-  id: string;
-  name: string;
-  instructions: string;
-};
+import {
+  createMedication as createMedicationRequest,
+  listMedications,
+  Medication,
+} from '../api/medications';
 
 type AuthenticatedAppProps = {
+  accessToken: string;
   email: string;
   busy: boolean;
   error: string | null;
@@ -28,6 +29,7 @@ type AuthenticatedAppProps = {
 type Tab = 'today' | 'medications';
 
 export function AuthenticatedApp({
+  accessToken,
   email,
   busy,
   error,
@@ -36,14 +38,53 @@ export function AuthenticatedApp({
   const [tab, setTab] = useState<Tab>('today');
   const [medications, setMedications] = useState<Medication[]>([]);
   const [addingMedication, setAddingMedication] = useState(false);
+  const [loadingMedications, setLoadingMedications] = useState(true);
+  const [medicationError, setMedicationError] = useState<string | null>(null);
+  const [savingMedication, setSavingMedication] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
-  const addMedication = (name: string, instructions: string) => {
-    setMedications((current) => [
-      ...current,
-      { id: `${Date.now()}-${current.length}`, name: name.trim(), instructions },
-    ]);
-    setAddingMedication(false);
-  };
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingMedications(true);
+    setMedicationError(null);
+    void listMedications(accessToken)
+      .then((result) => {
+        if (!cancelled) {
+          setMedications(result);
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) {
+          setMedicationError(
+            loadError instanceof Error
+              ? loadError.message
+              : 'Medications could not be loaded. Please try again.',
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingMedications(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, reloadKey]);
+
+  const addMedication = useCallback(
+    async (name: string, instructions: string) => {
+      setSavingMedication(true);
+      try {
+        const medication = await createMedicationRequest(accessToken, name, instructions);
+        setMedications((current) => [medication, ...current]);
+        setAddingMedication(false);
+      } finally {
+        setSavingMedication(false);
+      }
+    },
+    [accessToken],
+  );
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -75,15 +116,22 @@ export function AuthenticatedApp({
             <MedicationForm
               onCancel={() => setAddingMedication(false)}
               onSave={addMedication}
+              saving={savingMedication}
             />
           ) : tab === 'today' ? (
             <TodayScreen
               medicationCount={medications.length}
+              loading={loadingMedications}
+              error={medicationError}
+              onRetry={() => setReloadKey((current) => current + 1)}
               onViewMedications={() => setTab('medications')}
             />
           ) : (
             <MedicationsScreen
               medications={medications}
+              error={medicationError}
+              loading={loadingMedications}
+              onRetry={() => setReloadKey((current) => current + 1)}
               onAdd={() => setAddingMedication(true)}
             />
           )}
@@ -110,9 +158,15 @@ export function AuthenticatedApp({
 
 function TodayScreen({
   medicationCount,
+  loading,
+  error,
+  onRetry,
   onViewMedications,
 }: {
   medicationCount: number;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
   onViewMedications: () => void;
 }) {
   return (
@@ -142,7 +196,18 @@ function TodayScreen({
         <Text style={styles.sectionTitle}>Your medications</Text>
         <Text style={styles.countText}>{medicationCount}</Text>
       </View>
-      {medicationCount === 0 ? (
+      {loading ? (
+        <View style={styles.infoCard}>
+          <ActivityIndicator color="#1d4ed8" />
+          <Text style={[styles.cardBody, styles.loadingMessage]}>Loading your medications…</Text>
+        </View>
+      ) : error ? (
+        <View accessibilityRole="alert" style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>Medications couldn’t be loaded</Text>
+          <Text style={styles.cardBody}>{error}</Text>
+          <ActionButton label="Try again" onPress={onRetry} />
+        </View>
+      ) : medicationCount === 0 ? (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyTitle}>Nothing added yet</Text>
           <Text style={styles.cardBody}>
@@ -153,7 +218,7 @@ function TodayScreen({
       ) : (
         <View style={styles.infoCard}>
           <Text style={styles.cardBody}>
-            {medicationCount} {medicationCount === 1 ? 'medication' : 'medications'} saved for this session.
+            {medicationCount} {medicationCount === 1 ? 'medication' : 'medications'} saved to your account.
           </Text>
           <ActionButton label="View medications" onPress={onViewMedications} />
         </View>
@@ -164,9 +229,15 @@ function TodayScreen({
 
 function MedicationsScreen({
   medications,
+  error,
+  loading,
+  onRetry,
   onAdd,
 }: {
   medications: Medication[];
+  error: string | null;
+  loading: boolean;
+  onRetry: () => void;
   onAdd: () => void;
 }) {
   return (
@@ -177,13 +248,24 @@ function MedicationsScreen({
         Keep medication details and instructions together.
       </Text>
 
-      <ActionButton label="＋  Add medication" onPress={onAdd} />
+      <ActionButton label="＋  Add medication" disabled={loading || Boolean(error)} onPress={onAdd} />
 
-      {medications.length === 0 ? (
+      {loading ? (
+        <View style={styles.infoCard}>
+          <ActivityIndicator color="#1d4ed8" />
+          <Text style={[styles.cardBody, styles.loadingMessage]}>Loading your medications…</Text>
+        </View>
+      ) : error ? (
+        <View accessibilityRole="alert" style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>Medications couldn’t be loaded</Text>
+          <Text style={styles.cardBody}>{error}</Text>
+          <ActionButton label="Try again" onPress={onRetry} />
+        </View>
+      ) : medications.length === 0 ? (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyTitle}>No medications yet</Text>
           <Text style={styles.cardBody}>
-            Medication details you add will appear here. They are only kept for this session until database sync is added.
+            Medication details you add will appear here and be saved to your account.
           </Text>
         </View>
       ) : (
@@ -196,7 +278,7 @@ function MedicationsScreen({
               <View style={styles.medicationDetails}>
                 <Text style={styles.medicationName}>{medication.name}</Text>
                 <Text style={styles.instructionLabel}>INSTRUCTIONS</Text>
-                <Text style={styles.instructionText}>{medication.instructions}</Text>
+                <Text style={styles.instructionText}>{medication.instruction_text}</Text>
               </View>
             </View>
           ))}
@@ -209,21 +291,34 @@ function MedicationsScreen({
 function MedicationForm({
   onCancel,
   onSave,
+  saving,
 }: {
   onCancel: () => void;
-  onSave: (name: string, instructions: string) => void;
+  onSave: (name: string, instructions: string) => Promise<void>;
+  saving: boolean;
 }) {
   const [name, setName] = useState('');
   const [instructions, setInstructions] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const save = () => {
+  const save = async () => {
+    if (saving) {
+      return;
+    }
     if (!name.trim() || !instructions.trim()) {
       setError('Enter a medication name and its instructions to continue.');
       return;
     }
     setError(null);
-    onSave(name, instructions);
+    try {
+      await onSave(name, instructions);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'Medication could not be saved. Please try again.',
+      );
+    }
   };
 
   return (
@@ -256,7 +351,8 @@ function MedicationForm({
         <Text style={styles.inputLabel}>Instructions</Text>
         <TextInput
           accessibilityLabel="Medication instructions"
-          autoCapitalize="sentences"
+          autoCapitalize="none"
+          autoCorrect={false}
           multiline
           onChangeText={setInstructions}
           placeholder="Enter the instructions as written"
@@ -274,8 +370,17 @@ function MedicationForm({
             <Text style={styles.errorText}>{error}</Text>
           </View>
         ) : null}
-        <ActionButton label="Save medication" onPress={save} />
-        <Pressable accessibilityRole="button" onPress={onCancel} style={styles.cancelButton}>
+        <ActionButton
+          label={saving ? 'Saving medication…' : 'Save medication'}
+          disabled={saving}
+          onPress={() => void save()}
+        />
+        <Pressable
+          accessibilityRole="button"
+          disabled={saving}
+          onPress={onCancel}
+          style={styles.cancelButton}
+        >
           <Text style={styles.cancelText}>Cancel</Text>
         </Pressable>
       </ScrollView>
@@ -305,12 +410,26 @@ function TabButton({
   );
 }
 
-function ActionButton({ label, onPress }: { label: string; onPress: () => void }) {
+function ActionButton({
+  label,
+  onPress,
+  disabled = false,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [styles.actionButton, pressed && styles.pressedButton]}
+      style={({ pressed }) => [
+        styles.actionButton,
+        disabled && styles.disabledButton,
+        pressed && styles.pressedButton,
+      ]}
     >
       <Text style={styles.actionButtonText}>{label}</Text>
     </Pressable>
@@ -482,6 +601,13 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 15,
     fontWeight: '700',
+  },
+  disabledButton: {
+    opacity: 0.55,
+  },
+  loadingMessage: {
+    marginTop: 12,
+    textAlign: 'center',
   },
   pressedButton: {
     opacity: 0.75,

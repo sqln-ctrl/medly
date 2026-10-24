@@ -95,7 +95,7 @@ async def test_medication_creation_is_scoped_to_current_patient(client) -> None:
         headers={"Authorization": f"Bearer {patient_token}"},
         json={
             "name": "Vitamin D",
-            "instruction_text": "Take after breakfast every morning.",
+            "instruction_text": "  Take after breakfast every morning.  ",
         },
     )
     list_response = await client.get(
@@ -109,8 +109,10 @@ async def test_medication_creation_is_scoped_to_current_patient(client) -> None:
 
     assert create_response.status_code == 201
     assert create_response.json()["name"] == "Vitamin D"
+    assert create_response.json()["instruction_text"] == "  Take after breakfast every morning.  "
     assert list_response.status_code == 200
     assert len(list_response.json()) == 1
+    assert list_response.json()[0]["instruction_text"] == "  Take after breakfast every morning.  "
     assert second_list.status_code == 200
     assert second_list.json() == []
 
