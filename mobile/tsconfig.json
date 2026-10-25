@@ -5,6 +5,7 @@
     "allowJs": false,
     "jsx": "react-jsx",
     "moduleResolution": "bundler",
+    "moduleSuffixes": [".native", ".web", ""],
     "types": ["node"]
   }
 }

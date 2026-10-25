@@ -31,7 +31,7 @@ The next slice adds authenticated patient profile management and medication trac
 
 ## Functional scope for Phase 2
 
-Patients can create daily, weekly, or interval-based schedules for their medications, review the details, and explicitly confirm a schedule before it is enabled. The Today screen shows dose occurrences for today and the next seven days, calculated from the patient's IANA timezone. Dose occurrences are derived from schedule rules; a missing user-reported event is not shown as a clinical outcome. Browser and device notification delivery remain out of scope for this phase.
+Patients can create daily, weekly, or interval-based schedules for their medications, review the details, and explicitly confirm a schedule before it is enabled. The Today screen shows dose occurrences for today and the next seven days, calculated from the patient's IANA timezone. Dose occurrences are derived from schedule rules; a missing user-reported event is not shown as a clinical outcome. The mobile app offers opt-in local reminders for upcoming occurrences after notification permission is granted. Native device reminders can be delivered while the app is closed. Browser reminders run only while the Medly tab is open and may be delayed if the browser suspends it.
 
 ## Functional scope for Phase 3
 

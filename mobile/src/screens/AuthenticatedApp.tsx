@@ -20,18 +20,21 @@ import {
 } from '../api/medications';
 import {
   confirmMedicationSchedule,
+  getDoseAdherence,
   createMedicationSchedule,
   getDoseHistory,
   getUpcomingDoses,
   listMedicationSchedules,
   reportDose,
   DoseHistory,
+  DoseAdherence,
   DoseReport,
   DoseStatus,
   MedicationSchedule,
   UpcomingDose,
   UpcomingDoses,
 } from '../api/reminders';
+import { ReminderControls } from './ReminderControls';
 
 type AuthenticatedAppProps = {
   accessToken: string;
@@ -67,6 +70,7 @@ export function AuthenticatedApp({
   const [schedules, setSchedules] = useState<MedicationScheduleEntry[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingDoses | null>(null);
   const [doseHistory, setDoseHistory] = useState<DoseHistory | null>(null);
+  const [doseAdherence, setDoseAdherence] = useState<DoseAdherence | null>(null);
   const [patientTimezone, setPatientTimezone] = useState<string | null>(null);
   const [addingMedication, setAddingMedication] = useState(false);
   const [scheduleMedication, setScheduleMedication] = useState<Medication | null>(null);
@@ -75,6 +79,7 @@ export function AuthenticatedApp({
   const [medicationError, setMedicationError] = useState<string | null>(null);
   const [doseError, setDoseError] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [adherenceError, setAdherenceError] = useState<string | null>(null);
   const [timezoneError, setTimezoneError] = useState<string | null>(null);
   const [savingMedication, setSavingMedication] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
@@ -88,14 +93,22 @@ export function AuthenticatedApp({
     setMedicationError(null);
     setDoseError(null);
     setHistoryError(null);
+    setAdherenceError(null);
     setTimezoneError(null);
     void (async () => {
       try {
-        const [medicationsResult, dosesResult, profileResult, historyResult] = await Promise.allSettled([
+        const [
+          medicationsResult,
+          dosesResult,
+          profileResult,
+          historyResult,
+          adherenceResult,
+        ] = await Promise.allSettled([
           listMedications(accessToken),
           getUpcomingDoses(accessToken),
           getPatientProfile(accessToken),
           getDoseHistory(accessToken),
+          getDoseAdherence(accessToken),
         ]);
         if (cancelled) {
           return;
@@ -116,6 +129,15 @@ export function AuthenticatedApp({
             historyResult.reason instanceof Error
               ? historyResult.reason.message
               : 'Dose history could not be loaded. Please try again.',
+          );
+        }
+        if (adherenceResult.status === 'fulfilled') {
+          setDoseAdherence(adherenceResult.value);
+        } else {
+          setAdherenceError(
+            adherenceResult.reason instanceof Error
+              ? adherenceResult.reason.message
+              : 'Adherence summary could not be loaded. Please try again.',
           );
         }
         if (profileResult.status === 'fulfilled') {
@@ -252,14 +274,17 @@ export function AuthenticatedApp({
             <Text style={styles.brand}>MEDLY</Text>
             <Text style={styles.accountLabel} numberOfLines={1}>{email}</Text>
           </View>
-          <Pressable
-            accessibilityRole="button"
-            disabled={busy}
-            onPress={onSignOut}
-            style={styles.signOutButton}
-          >
-            <Text style={styles.signOutText}>{busy ? 'Signing out…' : 'Sign out'}</Text>
-          </Pressable>
+          <View style={styles.headerActions}>
+            <ReminderControls doses={upcoming?.doses ?? null} />
+            <Pressable
+              accessibilityRole="button"
+              disabled={busy}
+              onPress={onSignOut}
+              style={styles.signOutButton}
+            >
+              <Text style={styles.signOutText}>{busy ? 'Signing out…' : 'Sign out'}</Text>
+            </Pressable>
+          </View>
         </View>
 
         {error ? (
@@ -289,8 +314,10 @@ export function AuthenticatedApp({
           ) : tab === 'history' ? (
             <DoseHistoryScreen
               history={doseHistory}
+              adherence={doseAdherence}
               loading={loadingMedications}
-              error={historyError}
+              historyError={historyError}
+              adherenceError={adherenceError}
               onRetry={() => setReloadKey((current) => current + 1)}
             />
           ) : addingMedication ? (
@@ -1054,13 +1081,17 @@ function DoseListItem({
 
 function DoseHistoryScreen({
   history,
+  adherence,
   loading,
-  error,
+  historyError,
+  adherenceError,
   onRetry,
 }: {
   history: DoseHistory | null;
+  adherence: DoseAdherence | null;
   loading: boolean;
-  error: string | null;
+  historyError: string | null;
+  adherenceError: string | null;
   onRetry: () => void;
 }) {
   return (
@@ -1075,26 +1106,78 @@ function DoseHistoryScreen({
           <ActivityIndicator color="#1d4ed8" />
           <Text style={[styles.cardBody, styles.loadingMessage]}>Loading dose history…</Text>
         </View>
-      ) : error ? (
+      ) : historyError && adherenceError ? (
         <View accessibilityRole="alert" style={styles.emptyCard}>
           <Text style={styles.emptyTitle}>Dose history couldn’t be loaded</Text>
-          <Text style={styles.cardBody}>{error}</Text>
+          <Text style={styles.cardBody}>{historyError}</Text>
+          <Text style={styles.cardBody}>{adherenceError}</Text>
           <ActionButton label="Try again" onPress={onRetry} />
         </View>
-      ) : history?.events.length ? (
-        <>
-          <Text style={styles.historyRange}>
-            {history.start_date} – {history.end_date} · {history.timezone}
-          </Text>
-          <DoseList doses={history.events} timezone={history.timezone} />
-        </>
       ) : (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>No dose reports yet</Text>
-          <Text style={styles.cardBody}>
-            Reports you add from Today will appear here.
-          </Text>
-        </View>
+        <>
+          {adherenceError ? (
+            <View accessibilityRole="alert" style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>Adherence summary couldn’t be loaded</Text>
+              <Text style={styles.cardBody}>{adherenceError}</Text>
+              <ActionButton label="Try again" onPress={onRetry} />
+            </View>
+          ) : null}
+          {adherence ? (
+            <View style={styles.summaryCard}>
+              <Text style={styles.cardTitle}>Summary of your reports</Text>
+              <Text style={styles.historyRange}>
+                {adherence.start_date} – {adherence.end_date} · {adherence.timezone}
+              </Text>
+              <Text style={styles.cardBody}>
+                {adherence.total_reported === 0
+                  ? 'No dose reports in this period.'
+                  : `${adherence.total_reported} reports: ${adherence.taken} taken, ${adherence.skipped} skipped, ${adherence.missed} marked missed.`}
+              </Text>
+              {adherence.reported_taken_percentage !== null ? (
+                <Text style={styles.adherencePercentage}>
+                  {adherence.reported_taken_percentage}% of your reports were marked taken
+                </Text>
+              ) : null}
+              {adherence.medications.map((summary) => (
+                <View key={summary.medication_id} style={styles.adherenceRow}>
+                  <Text style={styles.medicationName}>{summary.medication_name}</Text>
+                  <Text style={styles.cardBody}>
+                    {summary.taken} taken · {summary.skipped} skipped · {summary.missed} marked missed
+                  </Text>
+                  {summary.reported_taken_percentage !== null ? (
+                    <Text style={styles.adherencePercentage}>
+                      {summary.reported_taken_percentage}% of reports marked taken
+                    </Text>
+                  ) : null}
+                </View>
+              ))}
+              <Text style={styles.formNote}>
+                These counts reflect only events you reported. Scheduled doses without a report are not classified.
+              </Text>
+            </View>
+          ) : null}
+          {historyError ? (
+            <View accessibilityRole="alert" style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>Dose history couldn’t be loaded</Text>
+              <Text style={styles.cardBody}>{historyError}</Text>
+              <ActionButton label="Try again" onPress={onRetry} />
+            </View>
+          ) : history?.events.length ? (
+            <>
+              <View style={styles.sectionHeading}>
+                <Text style={styles.sectionTitle}>Reported events</Text>
+              </View>
+              <DoseList doses={history.events} timezone={history.timezone} />
+            </>
+          ) : (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>No dose reports yet</Text>
+              <Text style={styles.cardBody}>
+                Reports you add from Today will appear here.
+              </Text>
+            </View>
+          )}
+        </>
       )}
     </ScrollView>
   );
@@ -1214,6 +1297,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 22,
     paddingVertical: 13,
+  },
+  headerActions: {
+    alignItems: 'flex-end',
   },
   brand: {
     color: '#1d4ed8',
@@ -1549,6 +1635,18 @@ const styles = StyleSheet.create({
     color: '#64748b',
     fontSize: 12,
     marginBottom: 10,
+  },
+  adherencePercentage: {
+    color: '#1e3a8a',
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 8,
+  },
+  adherenceRow: {
+    borderTopColor: '#e8edf4',
+    borderTopWidth: 1,
+    marginTop: 12,
+    paddingTop: 12,
   },
   reportedStatus: {
     color: '#475569',

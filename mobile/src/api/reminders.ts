@@ -52,6 +52,28 @@ export type DoseHistory = {
   events: DoseReport[];
 };
 
+export type MedicationAdherenceSummary = {
+  medication_id: string;
+  medication_name: string;
+  taken: number;
+  skipped: number;
+  missed: number;
+  total_reported: number;
+  reported_taken_percentage: number | null;
+};
+
+export type DoseAdherence = {
+  timezone: string;
+  start_date: string;
+  end_date: string;
+  total_reported: number;
+  taken: number;
+  skipped: number;
+  missed: number;
+  reported_taken_percentage: number | null;
+  medications: MedicationAdherenceSummary[];
+};
+
 async function request<TResponse>(
   path: string,
   accessToken: string,
@@ -160,4 +182,8 @@ export function reportDose(
 
 export function getDoseHistory(accessToken: string): Promise<DoseHistory> {
   return request<DoseHistory>('/doses/history', accessToken);
+}
+
+export function getDoseAdherence(accessToken: string): Promise<DoseAdherence> {
+  return request<DoseAdherence>('/doses/adherence', accessToken);
 }

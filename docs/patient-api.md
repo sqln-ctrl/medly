@@ -78,7 +78,7 @@ Lists the authenticated patient's schedules for that medication, including wheth
 
 Confirms and enables a pending schedule after the patient has reviewed it. Repeating confirmation is safe and does not change the original confirmation time. Schedule endpoints return `404` when the medication or schedule does not belong to the authenticated patient.
 
-These endpoints persist schedule rules; they do not yet deliver browser or device notifications.
+These endpoints persist schedule rules and return occurrences; the mobile app can schedule local reminders for upcoming occurrences after the user grants notification permission and enables reminders. Only confirmed and enabled schedules are eligible. Native device reminders can be delivered while the app is closed. Browser reminders require the Medly tab to remain open and may be delayed when the browser suspends the tab. Reminder text does not include medication names or instructions.
 
 ### `GET /doses/upcoming?days=7`
 
