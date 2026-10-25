@@ -31,4 +31,8 @@ The next slice adds authenticated patient profile management and medication trac
 
 ## Functional scope for Phase 2
 
-Patients can create daily, weekly, or interval-based schedules for their medications, review the details, and explicitly confirm a schedule before it is enabled. The Today screen shows dose occurrences for today and the next seven days, calculated from the patient's IANA timezone. Dose occurrences are derived from schedule rules; a missing user-reported event is not shown as a clinical outcome. Browser and device notification delivery, dose reporting actions, and adherence history remain out of scope for this phase.
+Patients can create daily, weekly, or interval-based schedules for their medications, review the details, and explicitly confirm a schedule before it is enabled. The Today screen shows dose occurrences for today and the next seven days, calculated from the patient's IANA timezone. Dose occurrences are derived from schedule rules; a missing user-reported event is not shown as a clinical outcome. Browser and device notification delivery remain out of scope for this phase.
+
+## Functional scope for Phase 3
+
+Patients can record a scheduled dose as taken, skipped, or missed, and review their dose-report history. These are user-reported events only; the system does not infer missed doses or clinical outcomes.

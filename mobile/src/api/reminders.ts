@@ -33,6 +33,25 @@ export type UpcomingDoses = {
   doses: UpcomingDose[];
 };
 
+export type DoseStatus = 'taken' | 'skipped' | 'missed';
+
+export type DoseReport = {
+  id: string;
+  schedule_id: string;
+  medication_id: string;
+  medication_name: string;
+  scheduled_for: string;
+  status: DoseStatus;
+  reported_at: string;
+};
+
+export type DoseHistory = {
+  timezone: string;
+  start_date: string;
+  end_date: string;
+  events: DoseReport[];
+};
+
 async function request<TResponse>(
   path: string,
   accessToken: string,
@@ -122,4 +141,23 @@ export function getUpcomingDoses(
   days = 7,
 ): Promise<UpcomingDoses> {
   return request<UpcomingDoses>(`/doses/upcoming?days=${days}`, accessToken);
+}
+
+export function reportDose(
+  accessToken: string,
+  dose: UpcomingDose,
+  status: DoseStatus,
+): Promise<DoseReport> {
+  return request<DoseReport>('/doses/report', accessToken, {
+    method: 'POST',
+    body: JSON.stringify({
+      schedule_id: dose.schedule_id,
+      scheduled_for: dose.scheduled_for,
+      status,
+    }),
+  });
+}
+
+export function getDoseHistory(accessToken: string): Promise<DoseHistory> {
+  return request<DoseHistory>('/doses/history', accessToken);
 }

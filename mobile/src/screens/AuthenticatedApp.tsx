@@ -21,8 +21,13 @@ import {
 import {
   confirmMedicationSchedule,
   createMedicationSchedule,
+  getDoseHistory,
   getUpcomingDoses,
   listMedicationSchedules,
+  reportDose,
+  DoseHistory,
+  DoseReport,
+  DoseStatus,
   MedicationSchedule,
   UpcomingDose,
   UpcomingDoses,
@@ -36,7 +41,7 @@ type AuthenticatedAppProps = {
   onSignOut: () => void;
 };
 
-type Tab = 'today' | 'medications';
+type Tab = 'today' | 'medications' | 'history';
 
 type ScheduleDraft = {
   cadence: MedicationSchedule['cadence'];
@@ -61,6 +66,7 @@ export function AuthenticatedApp({
   const [medications, setMedications] = useState<Medication[]>([]);
   const [schedules, setSchedules] = useState<MedicationScheduleEntry[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingDoses | null>(null);
+  const [doseHistory, setDoseHistory] = useState<DoseHistory | null>(null);
   const [patientTimezone, setPatientTimezone] = useState<string | null>(null);
   const [addingMedication, setAddingMedication] = useState(false);
   const [scheduleMedication, setScheduleMedication] = useState<Medication | null>(null);
@@ -68,6 +74,7 @@ export function AuthenticatedApp({
   const [loadingMedications, setLoadingMedications] = useState(true);
   const [medicationError, setMedicationError] = useState<string | null>(null);
   const [doseError, setDoseError] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [timezoneError, setTimezoneError] = useState<string | null>(null);
   const [savingMedication, setSavingMedication] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
@@ -80,13 +87,15 @@ export function AuthenticatedApp({
     setLoadingMedications(true);
     setMedicationError(null);
     setDoseError(null);
+    setHistoryError(null);
     setTimezoneError(null);
     void (async () => {
       try {
-        const [medicationsResult, dosesResult, profileResult] = await Promise.allSettled([
+        const [medicationsResult, dosesResult, profileResult, historyResult] = await Promise.allSettled([
           listMedications(accessToken),
           getUpcomingDoses(accessToken),
           getPatientProfile(accessToken),
+          getDoseHistory(accessToken),
         ]);
         if (cancelled) {
           return;
@@ -98,6 +107,15 @@ export function AuthenticatedApp({
             dosesResult.reason instanceof Error
               ? dosesResult.reason.message
               : 'Upcoming doses could not be loaded. Please try again.',
+          );
+        }
+        if (historyResult.status === 'fulfilled') {
+          setDoseHistory(historyResult.value);
+        } else {
+          setHistoryError(
+            historyResult.reason instanceof Error
+              ? historyResult.reason.message
+              : 'Dose history could not be loaded. Please try again.',
           );
         }
         if (profileResult.status === 'fulfilled') {
@@ -217,6 +235,14 @@ export function AuthenticatedApp({
     [accessToken],
   );
 
+  const saveDoseReport = useCallback(
+    async (dose: UpcomingDose, status: DoseStatus) => {
+      await reportDose(accessToken, dose, status);
+      setReloadKey((current) => current + 1);
+    },
+    [accessToken],
+  );
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
@@ -260,6 +286,13 @@ export function AuthenticatedApp({
               onCancel={() => setReviewEntry(null)}
               onConfirm={() => void confirmSchedule(reviewEntry)}
             />
+          ) : tab === 'history' ? (
+            <DoseHistoryScreen
+              history={doseHistory}
+              loading={loadingMedications}
+              error={historyError}
+              onRetry={() => setReloadKey((current) => current + 1)}
+            />
           ) : addingMedication ? (
             <MedicationForm
               onCancel={() => setAddingMedication(false)}
@@ -275,6 +308,7 @@ export function AuthenticatedApp({
               doseError={doseError}
               onRetry={() => setReloadKey((current) => current + 1)}
               onViewMedications={() => setTab('medications')}
+              onReportDose={saveDoseReport}
             />
           ) : (
             <MedicationsScreen
@@ -289,6 +323,7 @@ export function AuthenticatedApp({
               timezoneError={timezoneError}
               onCreateSchedule={(medication) => setScheduleMedication(medication)}
               onReviewSchedule={(entry) => setReviewEntry(entry)}
+              onReportDose={saveDoseReport}
             />
           )}
         </View>
@@ -305,6 +340,11 @@ export function AuthenticatedApp({
               selected={tab === 'medications'}
               onPress={() => setTab('medications')}
             />
+            <TabButton
+              label="History"
+              selected={tab === 'history'}
+              onPress={() => setTab('history')}
+            />
           </View>
         ) : null}
       </View>
@@ -320,6 +360,7 @@ function TodayScreen({
   doseError,
   onRetry,
   onViewMedications,
+  onReportDose,
 }: {
   medicationCount: number;
   loading: boolean;
@@ -328,6 +369,7 @@ function TodayScreen({
   doseError: string | null;
   onRetry: () => void;
   onViewMedications: () => void;
+  onReportDose: (dose: UpcomingDose, status: DoseStatus) => Promise<void>;
 }) {
   const todayDoses = upcoming
     ? upcoming.doses.filter(
@@ -378,7 +420,11 @@ function TodayScreen({
           <ActionButton label="View medications" onPress={onViewMedications} />
         </View>
       ) : (
-        <DoseList doses={todayDoses} timezone={upcoming.timezone} />
+        <DoseList
+          doses={todayDoses}
+          timezone={upcoming.timezone}
+          onReportDose={onReportDose}
+        />
       )}
 
       <View style={styles.sectionHeading}>
@@ -390,7 +436,10 @@ function TodayScreen({
           <Text style={styles.cardBody}>No other doses are scheduled in the next 7 days.</Text>
         </View>
       ) : upcoming ? (
-        <DoseList doses={upcomingDoses} timezone={upcoming.timezone} />
+        <DoseList
+          doses={upcomingDoses}
+          timezone={upcoming.timezone}
+        />
       ) : null}
 
       {error && !doseError ? (
@@ -415,6 +464,7 @@ function MedicationsScreen({
   onAdd,
   onCreateSchedule,
   onReviewSchedule,
+  onReportDose,
 }: {
   medications: Medication[];
   schedules: MedicationScheduleEntry[];
@@ -427,6 +477,7 @@ function MedicationsScreen({
   onAdd: () => void;
   onCreateSchedule: (medication: Medication) => void;
   onReviewSchedule: (entry: MedicationScheduleEntry) => void;
+  onReportDose: (dose: UpcomingDose, status: DoseStatus) => Promise<void>;
 }) {
   return (
     <ScrollView contentContainerStyle={styles.pageContent}>
@@ -887,7 +938,15 @@ function ScheduleReview({
   );
 }
 
-function DoseList({ doses, timezone }: { doses: UpcomingDose[]; timezone: string }) {
+function DoseList({
+  doses,
+  timezone,
+  onReportDose,
+}: {
+  doses: (UpcomingDose | DoseReport)[];
+  timezone: string;
+  onReportDose?: (dose: UpcomingDose, status: DoseStatus) => Promise<void>;
+}) {
   if (doses.length === 0) {
     return (
       <View style={styles.emptyCard}>
@@ -898,22 +957,146 @@ function DoseList({ doses, timezone }: { doses: UpcomingDose[]; timezone: string
   return (
     <View style={styles.doseList}>
       {doses.map((dose) => (
-        <View
+        <DoseListItem
           key={`${dose.schedule_id}-${dose.scheduled_for}`}
-          style={styles.doseCard}
-        >
-          <View style={styles.doseDetails}>
-            <Text style={styles.medicationName}>{dose.medication_name}</Text>
-            <Text style={styles.doseTime}>
-              {formatDoseDateTime(dose.scheduled_for, timezone)}
-            </Text>
-          </View>
-          {dose.status ? (
-            <Text style={styles.reportedStatus}>Reported: {dose.status}</Text>
-          ) : null}
-        </View>
+          dose={dose}
+          timezone={timezone}
+          onReportDose={onReportDose}
+        />
       ))}
     </View>
+  );
+}
+
+function DoseListItem({
+  dose,
+  timezone,
+  onReportDose,
+}: {
+  dose: UpcomingDose | DoseReport;
+  timezone: string;
+  onReportDose?: (dose: UpcomingDose, status: DoseStatus) => Promise<void>;
+}) {
+  const [savingStatus, setSavingStatus] = useState<DoseStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const canReport = Boolean(onReportDose) && new Date(dose.scheduled_for) <= new Date();
+  const scheduledDose: UpcomingDose = {
+    schedule_id: dose.schedule_id,
+    medication_id: dose.medication_id,
+    medication_name: dose.medication_name,
+    scheduled_for: dose.scheduled_for,
+    status: dose.status,
+  };
+  const recordStatus = async (status: DoseStatus) => {
+    if (!onReportDose || savingStatus) {
+      return;
+    }
+    setSavingStatus(status);
+    setError(null);
+    try {
+      await onReportDose(scheduledDose, status);
+    } catch (reportError) {
+      setError(
+        reportError instanceof Error
+          ? reportError.message
+          : 'Your report could not be saved. Please try again.',
+      );
+    } finally {
+      setSavingStatus(null);
+    }
+  };
+
+  return (
+    <View style={styles.doseCard}>
+      <View style={styles.doseDetails}>
+        <Text style={styles.medicationName}>{dose.medication_name}</Text>
+        <Text style={styles.doseTime}>{formatDoseDateTime(dose.scheduled_for, timezone)}</Text>
+        {dose.status ? (
+          <Text style={styles.reportedStatus}>You reported: {dose.status}</Text>
+        ) : null}
+      </View>
+      {canReport && onReportDose ? (
+        <View style={styles.reportActions}>
+          {(['taken', 'skipped', 'missed'] as const).map((status) => (
+            <Pressable
+              key={status}
+              accessibilityRole="button"
+              accessibilityState={{
+                disabled: savingStatus !== null,
+                selected: dose.status === status,
+              }}
+              disabled={savingStatus !== null}
+              onPress={() => void recordStatus(status)}
+              style={[
+                styles.reportButton,
+                dose.status === status && styles.selectedReportButton,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.reportButtonText,
+                  dose.status === status && styles.selectedReportButtonText,
+                ]}
+              >
+                {savingStatus === status ? 'Saving…' : status[0].toUpperCase() + status.slice(1)}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+      {onReportDose && !canReport ? (
+        <Text style={styles.reportedStatus}>Report available after scheduled time</Text>
+      ) : null}
+      {error ? <Text accessibilityRole="alert" style={styles.reportError}>{error}</Text> : null}
+    </View>
+  );
+}
+
+function DoseHistoryScreen({
+  history,
+  loading,
+  error,
+  onRetry,
+}: {
+  history: DoseHistory | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  return (
+    <ScrollView contentContainerStyle={styles.pageContent}>
+      <Text style={styles.pageEyebrow}>YOUR RECORDS</Text>
+      <Text style={styles.pageTitle}>Dose history</Text>
+      <Text style={styles.pageSubtitle}>
+        User-reported events from the last 30 days. No unreported doses are labeled as missed.
+      </Text>
+      {loading ? (
+        <View style={styles.infoCard}>
+          <ActivityIndicator color="#1d4ed8" />
+          <Text style={[styles.cardBody, styles.loadingMessage]}>Loading dose history…</Text>
+        </View>
+      ) : error ? (
+        <View accessibilityRole="alert" style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>Dose history couldn’t be loaded</Text>
+          <Text style={styles.cardBody}>{error}</Text>
+          <ActionButton label="Try again" onPress={onRetry} />
+        </View>
+      ) : history?.events.length ? (
+        <>
+          <Text style={styles.historyRange}>
+            {history.start_date} – {history.end_date} · {history.timezone}
+          </Text>
+          <DoseList doses={history.events} timezone={history.timezone} />
+        </>
+      ) : (
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>No dose reports yet</Text>
+          <Text style={styles.cardBody}>
+            Reports you add from Today will appear here.
+          </Text>
+        </View>
+      )}
+    </ScrollView>
   );
 }
 
@@ -1327,6 +1510,45 @@ const styles = StyleSheet.create({
     color: '#64748b',
     fontSize: 13,
     marginTop: 5,
+  },
+  reportActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    justifyContent: 'flex-end',
+  },
+  reportButton: {
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 34,
+    paddingHorizontal: 9,
+  },
+  selectedReportButton: {
+    backgroundColor: '#eff6ff',
+    borderColor: '#1d4ed8',
+  },
+  reportButtonText: {
+    color: '#475569',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  selectedReportButtonText: {
+    color: '#1d4ed8',
+  },
+  reportError: {
+    color: '#9f1239',
+    flexBasis: '100%',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  historyRange: {
+    color: '#64748b',
+    fontSize: 12,
+    marginBottom: 10,
   },
   reportedStatus: {
     color: '#475569',
