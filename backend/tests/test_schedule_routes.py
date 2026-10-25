@@ -236,7 +236,7 @@ def test_schedule_occurrences_follow_weekly_and_interval_rules() -> None:
     ]
 
 
-def test_schedule_occurrences_skip_nonexistent_dst_wall_times() -> None:
+def test_schedule_occurrences_shift_nonexistent_dst_wall_times_forward() -> None:
     schedule = MedicationSchedule(
         cadence="daily",
         starts_on=date(2026, 3, 7),
@@ -254,8 +254,10 @@ def test_schedule_occurrences_skip_nonexistent_dst_wall_times() -> None:
 
     assert [occurrence.date() for occurrence in occurrences] == [
         date(2026, 3, 7),
+        date(2026, 3, 8),
         date(2026, 3, 9),
     ]
+    assert occurrences[1].time() == time(3, 30)
 
 
 @pytest.mark.asyncio
@@ -263,6 +265,7 @@ async def test_upcoming_doses_only_include_confirmed_owned_schedules(
     client: AsyncClient,
 ) -> None:
     token = await register_user(client)
+    other_token = await register_user(client, email="other@example.com")
     medication_id = UUID(await create_medication(client, token))
     today = datetime.now(UTC).date()
     create_response = await client.post(
@@ -302,8 +305,14 @@ async def test_upcoming_doses_only_include_confirmed_owned_schedules(
         await session.commit()
 
     response = await client.get("/doses/upcoming?days=2", headers=headers)
+    other_response = await client.get(
+        "/doses/upcoming?days=2",
+        headers={"Authorization": f"Bearer {other_token}"},
+    )
 
     assert response.status_code == 200
+    assert other_response.status_code == 200
+    assert other_response.json()["doses"] == []
     result = response.json()
     assert result["timezone"] == "UTC"
     assert result["start_date"] == today.isoformat()

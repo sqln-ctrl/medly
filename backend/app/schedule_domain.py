@@ -9,7 +9,17 @@ def _scheduled_datetime(local_date: date, local_time: time, timezone: ZoneInfo) 
     candidate = wall_time.replace(tzinfo=timezone, fold=0)
     utc_candidate = candidate.astimezone(UTC)
     if utc_candidate.astimezone(timezone).replace(tzinfo=None) != wall_time:
-        return None
+        before = wall_time.replace(tzinfo=timezone, fold=0).utcoffset()
+        after = wall_time.replace(tzinfo=timezone, fold=1).utcoffset()
+        if before is None or after is None or after <= before:
+            return None
+        shifted_wall_time = wall_time + (after - before)
+        candidate = shifted_wall_time.replace(tzinfo=timezone)
+        if (
+            candidate.astimezone(UTC).astimezone(timezone).replace(tzinfo=None)
+            != shifted_wall_time
+        ):
+            return None
     return candidate
 
 

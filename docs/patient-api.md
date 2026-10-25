@@ -82,4 +82,4 @@ These endpoints persist schedule rules; they do not yet deliver browser or devic
 
 ### `GET /doses/upcoming?days=7`
 
-Returns scheduled dose occurrences from today through the requested number of days ahead (0–30), using the authenticated patient's IANA timezone. Only explicitly confirmed and enabled schedules are included. Each occurrence includes the medication name, timezone-aware scheduled instant, and the user's reported dose status when one exists; an absent status means no report has been recorded and is not an inferred adherence outcome.
+Returns scheduled dose occurrences from today through the requested number of days ahead (0–30), using the authenticated patient's IANA timezone. Only explicitly confirmed and enabled schedules are included. During a daylight-saving transition, ambiguous wall times use the earlier occurrence; nonexistent wall times shift forward by the size of the clock change. Each occurrence includes the medication name, timezone-aware scheduled instant, and the user's reported dose status when one exists; an absent status means no report has been recorded and is not an inferred adherence outcome.
