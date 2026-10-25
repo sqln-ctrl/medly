@@ -6,9 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dose_schemas import (
+    DoseAdherenceResponse,
     DoseHistoryResponse,
     DoseReportRequest,
     DoseReportResponse,
+    MedicationAdherenceSummary,
     UpcomingDoseResponse,
     UpcomingDosesResponse,
 )
@@ -238,6 +240,62 @@ async def get_dose_history(
         start_date=effective_start,
         end_date=effective_end,
         events=events,
+    )
+
+
+def summarize_dose_history(history: DoseHistoryResponse) -> DoseAdherenceResponse:
+    grouped: dict[UUID, dict[str, int | str]] = {}
+    counts = {"taken": 0, "skipped": 0, "missed": 0}
+    for event in history.events:
+        counts[event.status] += 1
+        medication = grouped.setdefault(
+            event.medication_id,
+            {
+                "medication_name": event.medication_name,
+                "taken": 0,
+                "skipped": 0,
+                "missed": 0,
+            },
+        )
+        medication[event.status] = int(medication[event.status]) + 1
+
+    total_reported = sum(counts.values())
+    medication_summaries = []
+    for medication_id, medication in grouped.items():
+        medication_total = sum(
+            int(medication[status]) for status in ("taken", "skipped", "missed")
+        )
+        medication_summaries.append(
+            MedicationAdherenceSummary(
+                medication_id=medication_id,
+                medication_name=str(medication["medication_name"]),
+                taken=int(medication["taken"]),
+                skipped=int(medication["skipped"]),
+                missed=int(medication["missed"]),
+                total_reported=medication_total,
+                reported_taken_percentage=(
+                    round(int(medication["taken"]) * 100 / medication_total, 1)
+                    if medication_total
+                    else None
+                ),
+            )
+        )
+    medication_summaries.sort(key=lambda item: item.medication_name.casefold())
+
+    return DoseAdherenceResponse(
+        timezone=history.timezone,
+        start_date=history.start_date,
+        end_date=history.end_date,
+        total_reported=total_reported,
+        taken=counts["taken"],
+        skipped=counts["skipped"],
+        missed=counts["missed"],
+        reported_taken_percentage=(
+            round(counts["taken"] * 100 / total_reported, 1)
+            if total_reported
+            else None
+        ),
+        medications=medication_summaries,
     )
 
 

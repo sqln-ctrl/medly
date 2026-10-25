@@ -101,3 +101,7 @@ Records or updates the authenticated patient's report for a scheduled occurrence
 ### `GET /doses/history`
 
 Returns the authenticated patient's dose reports from the last 30 days by default. Optional `start_date` and `end_date` use inclusive ISO dates in the patient's timezone; the requested range cannot exceed 366 days. History contains only explicitly reported dose events, not inferred missed doses.
+
+### `GET /doses/adherence`
+
+Returns counts of the patient's reported `taken`, `skipped`, and `missed` events overall and per medication for the same date-range rules as dose history. `reported_taken_percentage` is the proportion of recorded reports marked taken, not a measure of unreported scheduled doses; it is `null` when there are no reports. No status is inferred for occurrences without a report.

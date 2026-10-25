@@ -183,6 +183,10 @@ async def test_dose_history_returns_only_requested_patients_events(
         "/doses/history?start_date=2025-10-25&end_date=2025-10-27",
         headers=headers,
     )
+    adherence = await client.get(
+        "/doses/adherence?start_date=2025-10-25&end_date=2025-10-27",
+        headers=headers,
+    )
     other_history = await client.get(
         "/doses/history?start_date=2025-10-25&end_date=2025-10-27",
         headers={"Authorization": f"Bearer {other_token}"},
@@ -202,10 +206,36 @@ async def test_dose_history_returns_only_requested_patients_events(
     assert history.json()["end_date"] == "2025-10-27"
     assert len(history.json()["events"]) == 1
     assert history.json()["events"][0]["status"] == "missed"
+    assert adherence.status_code == 200
+    assert adherence.json()["total_reported"] == 1
+    assert adherence.json()["missed"] == 1
+    assert adherence.json()["reported_taken_percentage"] == 0
+    assert adherence.json()["medications"][0]["medication_name"] == "Vitamin D"
+    assert adherence.json()["medications"][0]["reported_taken_percentage"] == 0
     assert other_history.status_code == 200
     assert other_history.json()["events"] == []
     assert invalid_range.status_code == 422
     assert too_large.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_empty_adherence_summary_does_not_infer_outcomes(
+    client: AsyncClient,
+) -> None:
+    token = await register_user(client, "patient@example.com")
+    response = await client.get(
+        "/doses/adherence?start_date=2025-10-25&end_date=2025-10-27",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    summary = response.json()
+    assert summary["total_reported"] == 0
+    assert summary["taken"] == 0
+    assert summary["skipped"] == 0
+    assert summary["missed"] == 0
+    assert summary["reported_taken_percentage"] is None
+    assert summary["medications"] == []
 
 
 @pytest.mark.asyncio

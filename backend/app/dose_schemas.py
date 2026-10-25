@@ -46,6 +46,34 @@ class DoseHistoryResponse(BaseModel):
         return value
 
 
+class MedicationAdherenceSummary(BaseModel):
+    medication_id: UUID
+    medication_name: str
+    taken: int
+    skipped: int
+    missed: int
+    total_reported: int
+    reported_taken_percentage: float | None
+
+
+class DoseAdherenceResponse(BaseModel):
+    timezone: str
+    start_date: date
+    end_date: date
+    total_reported: int
+    taken: int
+    skipped: int
+    missed: int
+    reported_taken_percentage: float | None
+    medications: list[MedicationAdherenceSummary]
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        ZoneInfo(value)
+        return value
+
+
 class UpcomingDoseResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
