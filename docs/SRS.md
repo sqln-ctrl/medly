@@ -28,3 +28,7 @@ The initial repository skeleton must provide a runnable backend and mobile app w
 ## Functional scope for Phase 1
 
 The next slice adds authenticated patient profile management and medication tracking. The backend must allow a signed-in patient to read or update their timezone, list medications, and create medication records bound to their patient account. Every patient-scoped endpoint must enforce ownership checks and maintain the instruction text exactly as provided.
+
+## Functional scope for Phase 2
+
+Patients can create daily, weekly, or interval-based schedules for their medications, review the details, and explicitly confirm a schedule before it is enabled. The Today screen shows dose occurrences for today and the next seven days, calculated from the patient's IANA timezone. Dose occurrences are derived from schedule rules; a missing user-reported event is not shown as a clinical outcome. Browser and device notification delivery, dose reporting actions, and adherence history remain out of scope for this phase.

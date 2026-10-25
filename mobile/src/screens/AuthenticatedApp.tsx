@@ -14,9 +14,19 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   createMedication as createMedicationRequest,
+  getPatientProfile,
   listMedications,
   Medication,
 } from '../api/medications';
+import {
+  confirmMedicationSchedule,
+  createMedicationSchedule,
+  getUpcomingDoses,
+  listMedicationSchedules,
+  MedicationSchedule,
+  UpcomingDose,
+  UpcomingDoses,
+} from '../api/reminders';
 
 type AuthenticatedAppProps = {
   accessToken: string;
@@ -28,6 +38,18 @@ type AuthenticatedAppProps = {
 
 type Tab = 'today' | 'medications';
 
+type ScheduleDraft = {
+  cadence: MedicationSchedule['cadence'];
+  starts_on: string;
+  interval_days?: number;
+  times: { day_of_week: number; local_time: string }[];
+};
+
+type MedicationScheduleEntry = {
+  medication: Medication;
+  schedule: MedicationSchedule;
+};
+
 export function AuthenticatedApp({
   accessToken,
   email,
@@ -37,23 +59,81 @@ export function AuthenticatedApp({
 }: AuthenticatedAppProps) {
   const [tab, setTab] = useState<Tab>('today');
   const [medications, setMedications] = useState<Medication[]>([]);
+  const [schedules, setSchedules] = useState<MedicationScheduleEntry[]>([]);
+  const [upcoming, setUpcoming] = useState<UpcomingDoses | null>(null);
+  const [patientTimezone, setPatientTimezone] = useState<string | null>(null);
   const [addingMedication, setAddingMedication] = useState(false);
+  const [scheduleMedication, setScheduleMedication] = useState<Medication | null>(null);
+  const [reviewEntry, setReviewEntry] = useState<MedicationScheduleEntry | null>(null);
   const [loadingMedications, setLoadingMedications] = useState(true);
   const [medicationError, setMedicationError] = useState<string | null>(null);
+  const [doseError, setDoseError] = useState<string | null>(null);
+  const [timezoneError, setTimezoneError] = useState<string | null>(null);
   const [savingMedication, setSavingMedication] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [confirmingSchedule, setConfirmingSchedule] = useState(false);
+  const [scheduleActionError, setScheduleActionError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setLoadingMedications(true);
     setMedicationError(null);
-    void listMedications(accessToken)
-      .then((result) => {
+    setDoseError(null);
+    setTimezoneError(null);
+    void (async () => {
+      try {
+        const [medicationsResult, dosesResult, profileResult] = await Promise.allSettled([
+          listMedications(accessToken),
+          getUpcomingDoses(accessToken),
+          getPatientProfile(accessToken),
+        ]);
+        if (cancelled) {
+          return;
+        }
+        if (dosesResult.status === 'fulfilled') {
+          setUpcoming(dosesResult.value);
+        } else {
+          setDoseError(
+            dosesResult.reason instanceof Error
+              ? dosesResult.reason.message
+              : 'Upcoming doses could not be loaded. Please try again.',
+          );
+        }
+        if (profileResult.status === 'fulfilled') {
+          setPatientTimezone(profileResult.value.timezone);
+        } else {
+          setPatientTimezone(null);
+          setTimezoneError(
+            profileResult.reason instanceof Error
+              ? profileResult.reason.message
+              : 'Your timezone could not be loaded.',
+          );
+        }
+        if (medicationsResult.status === 'rejected') {
+          setMedicationError(
+            medicationsResult.reason instanceof Error
+              ? medicationsResult.reason.message
+              : 'Medications could not be loaded. Please try again.',
+          );
+          return;
+        }
+        const result = medicationsResult.value;
+        const scheduleResults = await Promise.all(
+          result.map(async (medication) => ({
+            medication,
+            schedules: await listMedicationSchedules(accessToken, medication.id),
+          })),
+        );
         if (!cancelled) {
           setMedications(result);
+          setSchedules(
+            scheduleResults.flatMap(({ medication, schedules: medicationSchedules }) =>
+              medicationSchedules.map((schedule) => ({ medication, schedule })),
+            ),
+          );
         }
-      })
-      .catch((loadError: unknown) => {
+      } catch (loadError: unknown) {
         if (!cancelled) {
           setMedicationError(
             loadError instanceof Error
@@ -61,12 +141,12 @@ export function AuthenticatedApp({
               : 'Medications could not be loaded. Please try again.',
           );
         }
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) {
           setLoadingMedications(false);
         }
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -81,6 +161,57 @@ export function AuthenticatedApp({
         setAddingMedication(false);
       } finally {
         setSavingMedication(false);
+      }
+    },
+    [accessToken],
+  );
+
+  const saveSchedule = useCallback(
+    async (draft: ScheduleDraft) => {
+      if (!scheduleMedication || !patientTimezone) {
+        return;
+      }
+      setSavingSchedule(true);
+      try {
+        const schedule = await createMedicationSchedule(
+          accessToken,
+          scheduleMedication.id,
+          draft,
+        );
+        const entry = { medication: scheduleMedication, schedule };
+        setSchedules((current) => [entry, ...current]);
+        setScheduleMedication(null);
+        setReviewEntry(entry);
+      } finally {
+        setSavingSchedule(false);
+      }
+    },
+    [accessToken, patientTimezone, scheduleMedication],
+  );
+
+  const confirmSchedule = useCallback(
+    async (entry: MedicationScheduleEntry) => {
+      setConfirmingSchedule(true);
+      setScheduleActionError(null);
+      try {
+        const schedule = await confirmMedicationSchedule(accessToken, entry.schedule.id);
+        setSchedules((current) =>
+          current.map((currentEntry) =>
+            currentEntry.schedule.id === schedule.id
+              ? { ...currentEntry, schedule }
+              : currentEntry,
+          ),
+        );
+        setReviewEntry(null);
+        setReloadKey((current) => current + 1);
+      } catch (confirmError) {
+        setScheduleActionError(
+          confirmError instanceof Error
+            ? confirmError.message
+            : 'The schedule could not be confirmed. Please try again.',
+        );
+      } finally {
+        setConfirmingSchedule(false);
       }
     },
     [accessToken],
@@ -112,7 +243,24 @@ export function AuthenticatedApp({
         ) : null}
 
         <View style={styles.content}>
-          {addingMedication ? (
+          {scheduleMedication ? (
+            <ScheduleForm
+              medication={scheduleMedication}
+              timezone={patientTimezone ?? 'UTC'}
+              saving={savingSchedule}
+              onCancel={() => setScheduleMedication(null)}
+              onSave={saveSchedule}
+            />
+          ) : reviewEntry ? (
+            <ScheduleReview
+              entry={reviewEntry}
+              timezone={patientTimezone ?? 'UTC'}
+              confirming={confirmingSchedule}
+              error={scheduleActionError}
+              onCancel={() => setReviewEntry(null)}
+              onConfirm={() => void confirmSchedule(reviewEntry)}
+            />
+          ) : addingMedication ? (
             <MedicationForm
               onCancel={() => setAddingMedication(false)}
               onSave={addMedication}
@@ -123,6 +271,8 @@ export function AuthenticatedApp({
               medicationCount={medications.length}
               loading={loadingMedications}
               error={medicationError}
+              upcoming={upcoming}
+              doseError={doseError}
               onRetry={() => setReloadKey((current) => current + 1)}
               onViewMedications={() => setTab('medications')}
             />
@@ -133,11 +283,17 @@ export function AuthenticatedApp({
               loading={loadingMedications}
               onRetry={() => setReloadKey((current) => current + 1)}
               onAdd={() => setAddingMedication(true)}
+              schedules={schedules}
+              timezone={patientTimezone}
+              scheduleEnabled={patientTimezone !== null}
+              timezoneError={timezoneError}
+              onCreateSchedule={(medication) => setScheduleMedication(medication)}
+              onReviewSchedule={(entry) => setReviewEntry(entry)}
             />
           )}
         </View>
 
-        {!addingMedication ? (
+        {!addingMedication && !scheduleMedication && !reviewEntry ? (
           <View accessibilityRole="tablist" style={styles.tabBar}>
             <TabButton
               label="Today"
@@ -160,15 +316,30 @@ function TodayScreen({
   medicationCount,
   loading,
   error,
+  upcoming,
+  doseError,
   onRetry,
   onViewMedications,
 }: {
   medicationCount: number;
   loading: boolean;
   error: string | null;
+  upcoming: UpcomingDoses | null;
+  doseError: string | null;
   onRetry: () => void;
   onViewMedications: () => void;
 }) {
+  const todayDoses = upcoming
+    ? upcoming.doses.filter(
+        (dose) => localDateFor(dose.scheduled_for, upcoming.timezone) === upcoming.start_date,
+      )
+    : [];
+  const upcomingDoses = upcoming
+    ? upcoming.doses.filter(
+        (dose) => localDateFor(dose.scheduled_for, upcoming.timezone) !== upcoming.start_date,
+      )
+    : [];
+
   return (
     <ScrollView contentContainerStyle={styles.pageContent}>
       <Text style={styles.pageEyebrow}>YOUR DAY</Text>
@@ -176,69 +347,86 @@ function TodayScreen({
       <Text style={styles.pageSubtitle}>A clear place to keep track of your medication routine.</Text>
 
       <View style={styles.summaryCard}>
-        <View style={styles.summaryTopLine}>
-          <Text style={styles.cardTitle}>Today’s schedule</Text>
-          <View style={styles.statusPill}>
-            <Text style={styles.statusPillText}>Not set up</Text>
-          </View>
-        </View>
         <Text style={styles.cardBody}>
-          {medicationCount === 0
-            ? 'Your schedule will appear here after you add medications and confirm a schedule.'
-            : 'Medication schedules are set up separately. Adding a medication does not create reminders.'}
-        </Text>
-        <Text style={styles.neutralNote}>
-          Reminders only start after you review and confirm a schedule.
+          Only schedules you have reviewed and confirmed appear here. Saving medication details alone never creates reminders.
         </Text>
       </View>
 
       <View style={styles.sectionHeading}>
-        <Text style={styles.sectionTitle}>Your medications</Text>
-        <Text style={styles.countText}>{medicationCount}</Text>
+        <Text style={styles.sectionTitle}>Today’s doses</Text>
       </View>
-      {loading ? (
-        <View style={styles.infoCard}>
-          <ActivityIndicator color="#1d4ed8" />
-          <Text style={[styles.cardBody, styles.loadingMessage]}>Loading your medications…</Text>
-        </View>
-      ) : error ? (
+      {doseError ? (
         <View accessibilityRole="alert" style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>Medications couldn’t be loaded</Text>
-          <Text style={styles.cardBody}>{error}</Text>
+          <Text style={styles.cardBody}>{doseError}</Text>
           <ActionButton label="Try again" onPress={onRetry} />
         </View>
-      ) : medicationCount === 0 ? (
+      ) : loading || !upcoming ? (
+        <View style={styles.infoCard}>
+          <ActivityIndicator color="#1d4ed8" />
+          <Text style={[styles.cardBody, styles.loadingMessage]}>Loading scheduled doses…</Text>
+        </View>
+      ) : todayDoses.length === 0 ? (
         <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>Nothing added yet</Text>
+          <Text style={styles.emptyTitle}>No scheduled doses today</Text>
           <Text style={styles.cardBody}>
-            Add medication details to keep them together in one place.
+            {error
+              ? 'Your medication list could not be loaded. Retry to check your current schedules.'
+              : medicationCount === 0
+              ? 'Add a medication, set up its schedule, then review and confirm it to see doses here.'
+              : 'Confirmed schedules with doses for today will appear here.'}
           </Text>
           <ActionButton label="View medications" onPress={onViewMedications} />
         </View>
       ) : (
-        <View style={styles.infoCard}>
-          <Text style={styles.cardBody}>
-            {medicationCount} {medicationCount === 1 ? 'medication' : 'medications'} saved to your account.
-          </Text>
-          <ActionButton label="View medications" onPress={onViewMedications} />
-        </View>
+        <DoseList doses={todayDoses} timezone={upcoming.timezone} />
       )}
+
+      <View style={styles.sectionHeading}>
+        <Text style={styles.sectionTitle}>Upcoming</Text>
+        <Text style={styles.countText}>Next 7 days</Text>
+      </View>
+      {!loading && upcoming && upcomingDoses.length === 0 ? (
+        <View style={styles.emptyCard}>
+          <Text style={styles.cardBody}>No other doses are scheduled in the next 7 days.</Text>
+        </View>
+      ) : upcoming ? (
+        <DoseList doses={upcomingDoses} timezone={upcoming.timezone} />
+      ) : null}
+
+      {error && !doseError ? (
+        <View accessibilityRole="alert" style={styles.errorBox}>
+          <Text style={styles.errorText}>{error}</Text>
+          <ActionButton label="Reload" onPress={onRetry} />
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
 
 function MedicationsScreen({
   medications,
+  schedules,
+  timezone,
+  scheduleEnabled,
+  timezoneError,
   error,
   loading,
   onRetry,
   onAdd,
+  onCreateSchedule,
+  onReviewSchedule,
 }: {
   medications: Medication[];
+  schedules: MedicationScheduleEntry[];
+  timezone: string | null;
+  scheduleEnabled: boolean;
+  timezoneError: string | null;
   error: string | null;
   loading: boolean;
   onRetry: () => void;
   onAdd: () => void;
+  onCreateSchedule: (medication: Medication) => void;
+  onReviewSchedule: (entry: MedicationScheduleEntry) => void;
 }) {
   return (
     <ScrollView contentContainerStyle={styles.pageContent}>
@@ -279,11 +467,49 @@ function MedicationsScreen({
                 <Text style={styles.medicationName}>{medication.name}</Text>
                 <Text style={styles.instructionLabel}>INSTRUCTIONS</Text>
                 <Text style={styles.instructionText}>{medication.instruction_text}</Text>
+                {schedules
+                  .filter((entry) => entry.medication.id === medication.id)
+                  .map((entry) => (
+                    <View key={entry.schedule.id} style={styles.scheduleSummary}>
+                      <Text style={styles.scheduleSummaryText}>
+                        {describeSchedule(entry.schedule, timezone ?? 'UTC')}
+                      </Text>
+                      {entry.schedule.confirmed_at ? (
+                        <Text style={styles.confirmedText}>Confirmed and active</Text>
+                      ) : (
+                        <Pressable
+                          accessibilityRole="button"
+                          onPress={() => onReviewSchedule(entry)}
+                          style={styles.inlineButton}
+                        >
+                          <Text style={styles.inlineButtonText}>Review and confirm</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  ))}
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={!scheduleEnabled}
+                  onPress={() => onCreateSchedule(medication)}
+                  style={styles.inlineButton}
+                >
+                  <Text style={[styles.inlineButtonText, !scheduleEnabled && styles.disabledText]}>
+                    {scheduleEnabled ? 'Set up schedule' : 'Timezone unavailable'}
+                  </Text>
+                </Pressable>
               </View>
             </View>
           ))}
         </View>
       )}
+      {timezoneError ? (
+        <View accessibilityRole="alert" style={styles.errorBox}>
+          <Text style={styles.errorText}>
+            Timezone unavailable: {timezoneError} Schedules can’t be created until your timezone loads.
+          </Text>
+          <ActionButton label="Retry" onPress={onRetry} />
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -386,6 +612,356 @@ function MedicationForm({
       </ScrollView>
     </KeyboardAvoidingView>
   );
+}
+
+function ScheduleForm({
+  medication,
+  timezone,
+  saving,
+  onCancel,
+  onSave,
+}: {
+  medication: Medication;
+  timezone: string;
+  saving: boolean;
+  onCancel: () => void;
+  onSave: (draft: ScheduleDraft) => Promise<void>;
+}) {
+  const [cadence, setCadence] = useState<MedicationSchedule['cadence']>('daily');
+  const [startsOn, setStartsOn] = useState(todayInTimezone(timezone));
+  const [localTimes, setLocalTimes] = useState(['08:00']);
+  const [intervalDays, setIntervalDays] = useState('2');
+  const [weekdays, setWeekdays] = useState<number[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const weekdayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  const save = async () => {
+    if (saving) {
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startsOn)) {
+      setError('Enter a start date in YYYY-MM-DD format.');
+      return;
+    }
+    if (localTimes.some((value) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(value))) {
+      setError('Enter each local time in 24-hour HH:MM format.');
+      return;
+    }
+    if (new Set(localTimes).size !== localTimes.length) {
+      setError('Reminder times must be unique.');
+      return;
+    }
+    if (cadence === 'weekly' && weekdays.length === 0) {
+      setError('Select at least one day of the week.');
+      return;
+    }
+    const parsedInterval = Number(intervalDays);
+    if (
+      cadence === 'interval' &&
+      (!Number.isInteger(parsedInterval) || parsedInterval < 1)
+    ) {
+      setError('Enter a positive number of days between doses.');
+      return;
+    }
+    setError(null);
+    try {
+      await onSave({
+        cadence,
+        starts_on: startsOn,
+        ...(cadence === 'interval' ? { interval_days: parsedInterval } : {}),
+        times: (cadence === 'weekly' ? weekdays : [-1]).flatMap((dayOfWeek) =>
+          localTimes.map((value) => ({
+            day_of_week: dayOfWeek,
+            local_time: `${value}:00`,
+          })),
+        ),
+      });
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'The schedule could not be saved. Please try again.',
+      );
+    }
+  };
+
+  return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={styles.formKeyboardView}
+    >
+      <ScrollView contentContainerStyle={styles.pageContent} keyboardShouldPersistTaps="handled">
+        <Pressable accessibilityRole="button" disabled={saving} onPress={onCancel} style={styles.backButton}>
+          <Text style={styles.backText}>‹  Medications</Text>
+        </Pressable>
+        <Text style={styles.pageEyebrow}>SCHEDULE</Text>
+        <Text style={styles.pageTitle}>Set up schedule</Text>
+        <Text style={styles.pageSubtitle}>
+          {medication.name}. Times and dates use your patient timezone ({timezone}). Review the details before confirming; saving this schedule does not activate it.
+        </Text>
+
+        <Text style={styles.inputLabel}>Repeat</Text>
+        <View style={styles.choiceRow}>
+          {(['daily', 'weekly', 'interval'] as const).map((value) => (
+            <Pressable
+              key={value}
+              accessibilityRole="button"
+              accessibilityState={{ selected: cadence === value }}
+              onPress={() => setCadence(value)}
+              style={[styles.choiceButton, cadence === value && styles.selectedChoiceButton]}
+            >
+              <Text style={[styles.choiceText, cadence === value && styles.selectedChoiceText]}>
+                {value === 'interval' ? 'Every N days' : value[0].toUpperCase() + value.slice(1)}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {cadence === 'weekly' ? (
+          <>
+            <Text style={styles.inputLabel}>Days</Text>
+            <View style={styles.choiceRow}>
+              {weekdayLabels.map((label, day) => {
+                const selected = weekdays.includes(day);
+                return (
+                  <Pressable
+                    key={label}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() =>
+                      setWeekdays((current) =>
+                        selected
+                          ? current.filter((value) => value !== day)
+                          : [...current, day].sort(),
+                      )
+                    }
+                    style={[styles.weekdayButton, selected && styles.selectedChoiceButton]}
+                  >
+                    <Text style={[styles.choiceText, selected && styles.selectedChoiceText]}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
+        ) : null}
+
+        {cadence === 'interval' ? (
+          <>
+            <Text style={styles.inputLabel}>Repeat every (days)</Text>
+            <TextInput
+              accessibilityLabel="Repeat interval in days"
+              keyboardType="number-pad"
+              onChangeText={setIntervalDays}
+              style={styles.input}
+              value={intervalDays}
+            />
+          </>
+        ) : null}
+
+        <Text style={styles.inputLabel}>Start date</Text>
+        <TextInput
+          accessibilityLabel="Schedule start date"
+          onChangeText={setStartsOn}
+          placeholder="YYYY-MM-DD"
+          style={styles.input}
+          value={startsOn}
+        />
+
+        <Text style={styles.inputLabel}>Scheduled dose times</Text>
+        {localTimes.map((value, index) => (
+          <View key={`local-time-${index}`} style={styles.timeInputRow}>
+            <TextInput
+              accessibilityLabel={`Scheduled dose time ${index + 1}`}
+              onChangeText={(nextValue) =>
+                setLocalTimes((current) =>
+                  current.map((currentValue, currentIndex) =>
+                    currentIndex === index ? nextValue : currentValue,
+                  ),
+                )
+              }
+              placeholder="HH:MM"
+              style={[styles.input, styles.timeInput]}
+              value={value}
+            />
+            {localTimes.length > 1 ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Remove time ${index + 1}`}
+                onPress={() =>
+                  setLocalTimes((current) => current.filter((_, currentIndex) => currentIndex !== index))
+                }
+                style={styles.removeTimeButton}
+              >
+                <Text style={styles.cancelText}>Remove</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ))}
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setLocalTimes((current) => [...current, '08:00'])}
+          style={styles.inlineButton}
+        >
+          <Text style={styles.inlineButtonText}>＋ Add another time</Text>
+        </Pressable>
+        <Text style={styles.formNote}>
+          This schedule is not active yet. Review and confirm it on the next screen to enable dose tracking. Browser and device notifications are not available yet.
+        </Text>
+        {error ? (
+          <View accessibilityRole="alert" style={styles.errorBox}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
+        <ActionButton
+          label={saving ? 'Saving schedule…' : 'Review schedule'}
+          disabled={saving}
+          onPress={() => void save()}
+        />
+        <Pressable
+          accessibilityRole="button"
+          disabled={saving}
+          onPress={onCancel}
+          style={styles.cancelButton}
+        >
+          <Text style={styles.cancelText}>Cancel</Text>
+        </Pressable>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+function ScheduleReview({
+  entry,
+  timezone,
+  confirming,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  entry: MedicationScheduleEntry;
+  timezone: string;
+  confirming: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <ScrollView contentContainerStyle={styles.pageContent}>
+      <Text style={styles.pageEyebrow}>REVIEW BEFORE ACTIVATING</Text>
+      <Text style={styles.pageTitle}>Confirm schedule</Text>
+      <Text style={styles.pageSubtitle}>
+        Check these schedule details. No clinical instructions are inferred or changed.
+      </Text>
+      <View style={styles.summaryCard}>
+        <Text style={styles.cardTitle}>{entry.medication.name}</Text>
+        <Text style={styles.scheduleReviewText}>
+          {describeSchedule(entry.schedule, timezone)}
+        </Text>
+        <Text style={styles.instructionLabel}>MEDICATION INSTRUCTIONS</Text>
+        <Text style={styles.instructionText}>{entry.medication.instruction_text}</Text>
+      </View>
+      <Text style={styles.formNote}>
+        Confirming activates this schedule for dose tracking. Browser and device notifications are not available yet. You can go back without activating it.
+      </Text>
+      {error ? (
+        <View accessibilityRole="alert" style={styles.errorBox}>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      ) : null}
+      <ActionButton
+        label={confirming ? 'Confirming…' : 'Confirm and activate schedule'}
+        disabled={confirming}
+        onPress={onConfirm}
+      />
+      <Pressable
+        accessibilityRole="button"
+        disabled={confirming}
+        onPress={onCancel}
+        style={styles.cancelButton}
+      >
+        <Text style={styles.cancelText}>Not now</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+function DoseList({ doses, timezone }: { doses: UpcomingDose[]; timezone: string }) {
+  if (doses.length === 0) {
+    return (
+      <View style={styles.emptyCard}>
+        <Text style={styles.cardBody}>No other doses are scheduled in this period.</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={styles.doseList}>
+      {doses.map((dose) => (
+        <View
+          key={`${dose.schedule_id}-${dose.scheduled_for}`}
+          style={styles.doseCard}
+        >
+          <View style={styles.doseDetails}>
+            <Text style={styles.medicationName}>{dose.medication_name}</Text>
+            <Text style={styles.doseTime}>
+              {formatDoseDateTime(dose.scheduled_for, timezone)}
+            </Text>
+          </View>
+          {dose.status ? (
+            <Text style={styles.reportedStatus}>Reported: {dose.status}</Text>
+          ) : null}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function localDateFor(value: string, timezone: string | undefined): string {
+  const date = timezone ? new Date(value) : new Date();
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    ...(timezone ? { timeZone: timezone } : {}),
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function todayInTimezone(timezone: string): string {
+  return localDateFor(new Date().toISOString(), timezone);
+}
+
+function formatDoseDateTime(value: string, timezone: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: timezone,
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+function describeSchedule(schedule: MedicationSchedule, timezone: string): string {
+  const timeSummary = schedule.times
+    .map((item) => {
+      const timeLabel = item.local_time.slice(0, 5);
+      if (schedule.cadence === 'weekly') {
+        return `${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][item.day_of_week]} ${timeLabel}`;
+      }
+      return timeLabel;
+    })
+    .join(', ');
+  const recurrence =
+    schedule.cadence === 'interval'
+      ? `Every ${schedule.interval_days} days`
+      : schedule.cadence === 'weekly'
+        ? 'Weekly'
+        : 'Daily';
+  return `${recurrence} · starts ${schedule.starts_on} · ${timeSummary} (${timezone})`;
 }
 
 function TabButton({
@@ -515,6 +1091,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 18,
   },
+  scheduleReviewText: {
+    color: '#334155',
+    fontSize: 15,
+    lineHeight: 23,
+    marginBottom: 18,
+    marginTop: 12,
+  },
   summaryTopLine: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -640,6 +1223,116 @@ const styles = StyleSheet.create({
   },
   medicationDetails: {
     flex: 1,
+  },
+  scheduleSummary: {
+    borderTopColor: '#e8edf4',
+    borderTopWidth: 1,
+    marginTop: 14,
+    paddingTop: 12,
+  },
+  scheduleSummaryText: {
+    color: '#475569',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  confirmedText: {
+    color: '#166534',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 8,
+  },
+  inlineButton: {
+    alignSelf: 'flex-start',
+    marginTop: 10,
+    paddingVertical: 6,
+  },
+  inlineButtonText: {
+    color: '#1d4ed8',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  disabledText: {
+    color: '#94a3b8',
+  },
+  choiceRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  timeInputRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  timeInput: {
+    flex: 1,
+  },
+  removeTimeButton: {
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 8,
+  },
+  choiceButton: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#cbd5e1',
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 42,
+    paddingHorizontal: 12,
+  },
+  weekdayButton: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#cbd5e1',
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 40,
+    minWidth: 42,
+    paddingHorizontal: 8,
+  },
+  selectedChoiceButton: {
+    backgroundColor: '#eff6ff',
+    borderColor: '#1d4ed8',
+  },
+  choiceText: {
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  selectedChoiceText: {
+    color: '#1d4ed8',
+  },
+  doseList: {
+    gap: 10,
+  },
+  doseCard: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#e2e8f0',
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+    padding: 15,
+  },
+  doseDetails: {
+    flex: 1,
+  },
+  doseTime: {
+    color: '#64748b',
+    fontSize: 13,
+    marginTop: 5,
+  },
+  reportedStatus: {
+    color: '#475569',
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'capitalize',
   },
   medicationName: {
     color: '#0f172a',

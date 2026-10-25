@@ -8,6 +8,12 @@ export type Medication = {
   created_at: string;
 };
 
+export type PatientProfile = {
+  user_id: string;
+  timezone: string;
+  created_at: string;
+};
+
 async function request<TResponse>(
   path: string,
   accessToken: string,
@@ -55,6 +61,10 @@ async function request<TResponse>(
 
 export function listMedications(accessToken: string): Promise<Medication[]> {
   return request<Medication[]>('/medications', accessToken);
+}
+
+export function getPatientProfile(accessToken: string): Promise<PatientProfile> {
+  return request<PatientProfile>('/patients/me', accessToken);
 }
 
 export function createMedication(
