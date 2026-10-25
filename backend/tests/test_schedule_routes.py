@@ -1,14 +1,20 @@
+from datetime import UTC, date, datetime, time
 from collections.abc import AsyncIterator
 from pathlib import Path
+from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db import Base, get_session
 from app.main import app
+from app.models import DoseEvent, Medication, MedicationSchedule, ScheduleTime
 from app.rate_limit import limiter
+from app.schedule_domain import schedule_occurrences
 
 
 @pytest_asyncio.fixture
@@ -20,6 +26,7 @@ async def client(
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+    app.state.auth_test_session_factory = session_factory
 
     async def override_get_session() -> AsyncIterator[AsyncSession]:
         async with session_factory() as session:
@@ -34,6 +41,7 @@ async def client(
     ) as test_client:
         yield test_client
     app.dependency_overrides.pop(get_session, None)
+    del app.state.auth_test_session_factory
     limiter.reset()
     await engine.dispose()
 
@@ -185,3 +193,123 @@ async def test_schedule_routes_require_authentication(client: AsyncClient) -> No
         "/schedules/00000000-0000-0000-0000-000000000000/confirm",
     )
     assert response.status_code == 401
+
+
+def test_schedule_occurrences_follow_weekly_and_interval_rules() -> None:
+    weekly = MedicationSchedule(
+        cadence="weekly",
+        starts_on=date(2026, 10, 26),
+        ends_on=None,
+        interval_days=None,
+    )
+    weekly_occurrences = schedule_occurrences(
+        weekly,
+        [ScheduleTime(day_of_week=0, local_time=time(8, 30))],
+        timezone=ZoneInfo("America/New_York"),
+        start_date=date(2026, 10, 26),
+        end_date=date(2026, 11, 2),
+    )
+    assert [occurrence.date() for occurrence in weekly_occurrences] == [
+        date(2026, 10, 26),
+        date(2026, 11, 2),
+    ]
+    assert weekly_occurrences[0].utcoffset().total_seconds() == -4 * 60 * 60
+    assert weekly_occurrences[1].utcoffset().total_seconds() == -5 * 60 * 60
+
+    interval = MedicationSchedule(
+        cadence="interval",
+        starts_on=date(2026, 10, 26),
+        ends_on=None,
+        interval_days=3,
+    )
+    interval_occurrences = schedule_occurrences(
+        interval,
+        [ScheduleTime(day_of_week=-1, local_time=time(9))],
+        timezone=ZoneInfo("UTC"),
+        start_date=date(2026, 10, 26),
+        end_date=date(2026, 11, 2),
+    )
+    assert [occurrence.date() for occurrence in interval_occurrences] == [
+        date(2026, 10, 26),
+        date(2026, 10, 29),
+        date(2026, 11, 1),
+    ]
+
+
+def test_schedule_occurrences_skip_nonexistent_dst_wall_times() -> None:
+    schedule = MedicationSchedule(
+        cadence="daily",
+        starts_on=date(2026, 3, 7),
+        ends_on=None,
+        interval_days=None,
+    )
+
+    occurrences = schedule_occurrences(
+        schedule,
+        [ScheduleTime(day_of_week=-1, local_time=time(2, 30))],
+        timezone=ZoneInfo("America/New_York"),
+        start_date=date(2026, 3, 7),
+        end_date=date(2026, 3, 9),
+    )
+
+    assert [occurrence.date() for occurrence in occurrences] == [
+        date(2026, 3, 7),
+        date(2026, 3, 9),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_upcoming_doses_only_include_confirmed_owned_schedules(
+    client: AsyncClient,
+) -> None:
+    token = await register_user(client)
+    medication_id = UUID(await create_medication(client, token))
+    today = datetime.now(UTC).date()
+    create_response = await client.post(
+        f"/medications/{medication_id}/schedules",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "cadence": "daily",
+            "starts_on": today.isoformat(),
+            "times": [{"day_of_week": -1, "local_time": "08:00:00"}],
+        },
+    )
+    schedule_id = UUID(create_response.json()["id"])
+    headers = {"Authorization": f"Bearer {token}"}
+
+    pending_response = await client.get("/doses/upcoming?days=2", headers=headers)
+    assert pending_response.status_code == 200
+    assert pending_response.json()["doses"] == []
+
+    await client.post(f"/schedules/{schedule_id}/confirm", headers=headers)
+    async with app.state.auth_test_session_factory() as session:
+        schedule = await session.get(MedicationSchedule, schedule_id)
+        assert schedule is not None
+        patient_id = await session.scalar(
+            select(Medication.patient_id).where(Medication.id == medication_id)
+        )
+        assert patient_id is not None
+        session.add(
+            DoseEvent(
+                schedule_id=schedule_id,
+                medication_id=medication_id,
+                patient_id=patient_id,
+                scheduled_for=datetime.combine(today, time(8), tzinfo=UTC),
+                status="taken",
+                reported_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/doses/upcoming?days=2", headers=headers)
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["timezone"] == "UTC"
+    assert result["start_date"] == today.isoformat()
+    assert [dose["medication_name"] for dose in result["doses"]] == [
+        "Vitamin D",
+        "Vitamin D",
+        "Vitamin D",
+    ]
+    assert result["doses"][0]["status"] == "taken"

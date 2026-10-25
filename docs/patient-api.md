@@ -78,4 +78,8 @@ Lists the authenticated patient's schedules for that medication, including wheth
 
 Confirms and enables a pending schedule after the patient has reviewed it. Repeating confirmation is safe and does not change the original confirmation time. Schedule endpoints return `404` when the medication or schedule does not belong to the authenticated patient.
 
-These endpoints persist schedule rules only; they do not yet deliver browser or device notifications.
+These endpoints persist schedule rules; they do not yet deliver browser or device notifications.
+
+### `GET /doses/upcoming?days=7`
+
+Returns scheduled dose occurrences from today through the requested number of days ahead (0–30), using the authenticated patient's IANA timezone. Only explicitly confirmed and enabled schedules are included. Each occurrence includes the medication name, timezone-aware scheduled instant, and the user's reported dose status when one exists; an absent status means no report has been recorded and is not an inferred adherence outcome.

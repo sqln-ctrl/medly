@@ -10,6 +10,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.auth_routes import router as auth_router
 from app.db import engine
+from app.dose_routes import router as dose_router
 from app.patient_routes import router as patient_router
 from app.rate_limit import limiter
 from app.schedule_routes import router as schedule_router
@@ -35,6 +36,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(patient_router)
 app.include_router(schedule_router)
+app.include_router(dose_router)
 
 
 @app.get("/")
