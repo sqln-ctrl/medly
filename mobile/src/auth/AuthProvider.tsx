@@ -1,5 +1,6 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
+import { setAccessTokenRefresher } from '../api/authenticatedRequest';
 import {
   ApiError,
   AuthSession,
@@ -41,9 +42,13 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
+  const accessTokenRef = useRef<string | null>(null);
+  const refreshTokenRef = useRef<string | null>(null);
 
   const applySession = useCallback(async (session: AuthSession) => {
     await saveRefreshToken(session.refresh_token);
+    accessTokenRef.current = session.access_token;
+    refreshTokenRef.current = session.refresh_token;
     setUser(session.user);
     setAccessToken(session.access_token);
     setRefreshToken(session.refresh_token);
@@ -51,12 +56,48 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
     setStatus('authenticated');
   }, []);
 
+  const refreshAuthenticatedAccessToken = useCallback(
+    async (rejectedAccessToken: string): Promise<string> => {
+      if (accessTokenRef.current && accessTokenRef.current !== rejectedAccessToken) {
+        return accessTokenRef.current;
+      }
+      const currentRefreshToken = refreshTokenRef.current;
+      if (!currentRefreshToken) {
+        throw new Error('Your session could not be refreshed. Please sign in again.');
+      }
+      try {
+        const session = await refreshSession(currentRefreshToken);
+        await applySession(session);
+        return session.access_token;
+      } catch (refreshError) {
+        if (refreshError instanceof ApiError && refreshError.status === 401) {
+          await clearRefreshToken();
+          accessTokenRef.current = null;
+          refreshTokenRef.current = null;
+          setUser(null);
+          setAccessToken(null);
+          setRefreshToken(null);
+          setStatus('expired');
+          setSessionError(null);
+        }
+        throw refreshError;
+      }
+    },
+    [applySession],
+  );
+
+  useEffect(() => {
+    setAccessTokenRefresher(refreshAuthenticatedAccessToken);
+  }, [refreshAuthenticatedAccessToken]);
+
   const restoreSession = useCallback(async () => {
     setStatus('loading');
     setSessionError(null);
     try {
       const storedRefreshToken = await getRefreshToken();
       if (!storedRefreshToken) {
+        accessTokenRef.current = null;
+        refreshTokenRef.current = null;
         setUser(null);
         setAccessToken(null);
         setRefreshToken(null);
@@ -68,6 +109,8 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
       if (error instanceof ApiError && error.status === 401) {
         try {
           await clearRefreshToken();
+          accessTokenRef.current = null;
+          refreshTokenRef.current = null;
           setUser(null);
           setAccessToken(null);
           setRefreshToken(null);
@@ -108,6 +151,8 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
     }
     await logoutRequest(token);
     await clearRefreshToken();
+    accessTokenRef.current = null;
+    refreshTokenRef.current = null;
     setUser(null);
     setAccessToken(null);
     setRefreshToken(null);
@@ -117,6 +162,8 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
 
   const startNewSession = useCallback(async () => {
     await clearRefreshToken();
+    accessTokenRef.current = null;
+    refreshTokenRef.current = null;
     setUser(null);
     setAccessToken(null);
     setRefreshToken(null);
