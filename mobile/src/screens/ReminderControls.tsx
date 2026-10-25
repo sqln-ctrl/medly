@@ -50,6 +50,28 @@ export function ReminderControls({ doses }: { doses: UpcomingDose[] | null }) {
   }, []);
 
   useEffect(() => {
+    if (Platform.OS !== 'web') {
+      return;
+    }
+    const refreshPermission = () => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+      void getReminderPermission()
+        .then((currentPermission) => setPermission(currentPermission))
+        .catch((permissionError: unknown) => {
+          setError(
+            permissionError instanceof Error
+              ? permissionError.message
+              : 'Browser notification permission could not be checked.',
+          );
+        });
+    };
+    document.addEventListener('visibilitychange', refreshPermission);
+    return () => document.removeEventListener('visibilitychange', refreshPermission);
+  }, []);
+
+  useEffect(() => {
     if (permission === null || doses === null) {
       return;
     }
@@ -137,10 +159,18 @@ export function ReminderControls({ doses }: { doses: UpcomingDose[] | null }) {
         <Text accessibilityRole="alert" style={styles.error}>
           {error}
         </Text>
+      ) : permission === 'unsupported' ? (
+        <Text style={styles.error}>
+          Browser notifications need HTTPS or localhost and browser notification support.
+        </Text>
+      ) : enabled && scheduledCount === 0 ? (
+        <Text style={styles.status}>
+          No unreported confirmed doses in the next 30 days. Keep this tab open for reminders.
+        </Text>
       ) : enabled ? (
         <Text style={styles.status}>
           {Platform.OS === 'web'
-            ? 'Browser reminders only run while this tab is open.'
+            ? 'Browser reminders need this tab open. A suspended tab may show them late.'
             : 'Reminders are scheduled for confirmed doses.'}
           {` ${scheduledCount} upcoming ${
             scheduledCount === 1 ? 'reminder' : 'reminders'

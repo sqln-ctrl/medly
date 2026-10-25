@@ -1,7 +1,13 @@
 import { UpcomingDose } from '../api/reminders';
 
 const MAX_TIMEOUT = 2_147_000_000;
-const timers = new Map<string, ReturnType<typeof setTimeout>>();
+type PendingReminder = {
+  dose: UpcomingDose;
+  timer: ReturnType<typeof setTimeout>;
+};
+
+const pendingReminders = new Map<string, PendingReminder>();
+let visibilityListenerRegistered = false;
 
 export async function getReminderPermission(): Promise<'granted' | 'denied' | 'default' | 'unsupported'> {
   if (typeof Notification === 'undefined' || !window.isSecureContext) {
@@ -20,8 +26,46 @@ export async function requestReminderPermission(): Promise<
 }
 
 export async function cancelLocalReminders(): Promise<void> {
-  timers.forEach((timer) => clearTimeout(timer));
-  timers.clear();
+  pendingReminders.forEach(({ timer }) => clearTimeout(timer));
+  pendingReminders.clear();
+}
+
+function fireReminder(id: string): void {
+  const reminder = pendingReminders.get(id);
+  if (!reminder) {
+    return;
+  }
+  clearTimeout(reminder.timer);
+  pendingReminders.delete(id);
+  if (Notification.permission !== 'granted') {
+    return;
+  }
+  const notification = new Notification('Medication reminder', {
+    body: 'A dose is scheduled now. Open Medly to review your schedule.',
+    tag: id,
+  });
+  notification.onclick = () => {
+    window.focus();
+    notification.close();
+  };
+}
+
+function installVisibilityListener(): void {
+  if (visibilityListenerRegistered) {
+    return;
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') {
+      return;
+    }
+    const now = Date.now();
+    pendingReminders.forEach(({ dose }, id) => {
+      if (new Date(dose.scheduled_for).getTime() <= now) {
+        fireReminder(id);
+      }
+    });
+  });
+  visibilityListenerRegistered = true;
 }
 
 export async function scheduleLocalReminders(doses: UpcomingDose[]): Promise<number> {
@@ -33,29 +77,25 @@ export async function scheduleLocalReminders(doses: UpcomingDose[]): Promise<num
     (dose) =>
       dose.status === null && new Date(dose.scheduled_for).getTime() > Date.now(),
   );
+  const scheduleReminder = (id: string, dose: UpcomingDose) => {
+    const delay = new Date(dose.scheduled_for).getTime() - Date.now();
+    const timer = setTimeout(
+      () => {
+        if (delay > MAX_TIMEOUT) {
+          scheduleReminder(id, dose);
+        } else {
+          fireReminder(id);
+        }
+      },
+      Math.min(Math.max(0, delay), MAX_TIMEOUT),
+    );
+    pendingReminders.set(id, { dose, timer });
+  };
+
   upcoming.forEach((dose) => {
     const id = `${dose.schedule_id}:${dose.scheduled_for}`;
-    const dueAt = new Date(dose.scheduled_for).getTime();
-    const scheduleNext = () => {
-      const delay = dueAt - Date.now();
-      if (delay > MAX_TIMEOUT) {
-        timers.set(id, setTimeout(scheduleNext, MAX_TIMEOUT));
-        return;
-      }
-      timers.set(
-        id,
-        setTimeout(() => {
-          timers.delete(id);
-          if (Notification.permission === 'granted') {
-            new Notification('Medication reminder', {
-              body: 'A dose is scheduled now. Open Medly to review your schedule.',
-              tag: id,
-            });
-          }
-        }, Math.max(0, delay)),
-      );
-    };
-    scheduleNext();
+    scheduleReminder(id, dose);
   });
+  installVisibilityListener();
   return upcoming.length;
 }

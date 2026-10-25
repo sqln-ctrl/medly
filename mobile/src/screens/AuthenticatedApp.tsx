@@ -123,7 +123,7 @@ export function AuthenticatedApp({
           adherenceResult,
         ] = await Promise.allSettled([
           listMedications(accessToken),
-          getUpcomingDoses(accessToken),
+          getUpcomingDoses(accessToken, 30),
           getPatientProfile(accessToken),
           getDoseHistory(accessToken),
           getDoseAdherence(accessToken),
@@ -467,7 +467,10 @@ function TodayScreen({
     : [];
   const upcomingDoses = upcoming
     ? upcoming.doses.filter(
-        (dose) => localDateFor(dose.scheduled_for, upcoming.timezone) !== upcoming.start_date,
+        (dose) => {
+          const doseDate = localDateFor(dose.scheduled_for, upcoming.timezone);
+          return doseDate > upcoming.start_date && doseDate <= addDaysToDate(upcoming.start_date, 7);
+        },
       )
     : [];
 
@@ -1663,6 +1666,14 @@ function localDateFor(value: string, timezone: string | undefined): string {
 
 function todayInTimezone(timezone: string): string {
   return localDateFor(new Date().toISOString(), timezone);
+}
+
+function addDaysToDate(value: string, days: number): string {
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(
+    date.getUTCDate(),
+  ).padStart(2, '0')}`;
 }
 
 function isValidDateString(value: string): boolean {
