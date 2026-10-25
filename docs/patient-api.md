@@ -83,3 +83,21 @@ These endpoints persist schedule rules; they do not yet deliver browser or devic
 ### `GET /doses/upcoming?days=7`
 
 Returns scheduled dose occurrences from today through the requested number of days ahead (0–30), using the authenticated patient's IANA timezone. Only explicitly confirmed and enabled schedules are included. During a daylight-saving transition, ambiguous wall times use the earlier occurrence; nonexistent wall times shift forward by the size of the clock change. Each occurrence includes the medication name, timezone-aware scheduled instant, and the user's reported dose status when one exists; an absent status means no report has been recorded and is not an inferred adherence outcome.
+
+### `POST /doses/report`
+
+Records or updates the authenticated patient's report for a scheduled occurrence:
+
+```json
+{
+  "schedule_id": "schedule-uuid",
+  "scheduled_for": "2026-10-26T08:00:00-04:00",
+  "status": "taken"
+}
+```
+
+`status` is `taken`, `skipped`, or `missed`. The timestamp must include a timezone, match an occurrence on the patient's confirmed schedule, and not be in the future. A repeated report for the same schedule occurrence updates that user's report. This is a patient-reported record only; Medly does not infer a status or recommend what to do about a dose.
+
+### `GET /doses/history`
+
+Returns the authenticated patient's dose reports from the last 30 days by default. Optional `start_date` and `end_date` use inclusive ISO dates in the patient's timezone; the requested range cannot exceed 366 days. History contains only explicitly reported dose events, not inferred missed doses.

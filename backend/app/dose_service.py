@@ -5,7 +5,13 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dose_schemas import UpcomingDoseResponse, UpcomingDosesResponse
+from app.dose_schemas import (
+    DoseHistoryResponse,
+    DoseReportRequest,
+    DoseReportResponse,
+    UpcomingDoseResponse,
+    UpcomingDosesResponse,
+)
 from app.models import (
     DoseEvent,
     Medication,
@@ -98,6 +104,140 @@ async def get_upcoming_doses(
         start_date=start_date,
         end_date=end_date,
         doses=doses,
+    )
+
+
+async def report_dose(
+    session: AsyncSession,
+    *,
+    patient_id: UUID,
+    payload: DoseReportRequest,
+) -> DoseReportResponse | None:
+    result = await session.execute(
+        select(MedicationSchedule, Medication)
+        .join(
+            Medication,
+            (Medication.id == MedicationSchedule.medication_id)
+            & (Medication.patient_id == MedicationSchedule.patient_id),
+        )
+        .where(
+            MedicationSchedule.id == payload.schedule_id,
+            MedicationSchedule.patient_id == patient_id,
+            MedicationSchedule.confirmed_at.is_not(None),
+            MedicationSchedule.enabled_at.is_not(None),
+        )
+    )
+    schedule_medication = result.one_or_none()
+    if schedule_medication is None:
+        return None
+    schedule, medication = schedule_medication
+    profile = await session.get(PatientProfile, patient_id)
+    timezone = ZoneInfo(profile.timezone if profile else "UTC")
+    local_datetime = payload.scheduled_for.astimezone(timezone)
+    schedule_times = await get_schedule_times(session, schedule_ids=[schedule.id])
+    occurrences = schedule_occurrences(
+        schedule,
+        schedule_times[schedule.id],
+        timezone=timezone,
+        start_date=local_datetime.date(),
+        end_date=local_datetime.date(),
+    )
+    scheduled_for = payload.scheduled_for.astimezone(UTC)
+    if not any(occurrence.astimezone(UTC) == scheduled_for for occurrence in occurrences):
+        return None
+
+    now = datetime.now(UTC)
+    if scheduled_for > now:
+        raise ValueError("A dose report can only be added after its scheduled time.")
+
+    event = await session.scalar(
+        select(DoseEvent).where(
+            DoseEvent.schedule_id == schedule.id,
+            DoseEvent.scheduled_for == scheduled_for,
+        )
+    )
+    if event is None:
+        event = DoseEvent(
+            schedule_id=schedule.id,
+            medication_id=medication.id,
+            patient_id=patient_id,
+            scheduled_for=scheduled_for,
+            status=payload.status,
+            reported_at=now,
+        )
+        session.add(event)
+    else:
+        event.status = payload.status
+        event.reported_at = now
+    await session.commit()
+    await session.refresh(event)
+    return DoseReportResponse(
+        id=event.id,
+        schedule_id=event.schedule_id,
+        medication_id=medication.id,
+        medication_name=medication.name,
+        scheduled_for=scheduled_for,
+        status=event.status,
+        reported_at=now,
+    )
+
+
+async def get_dose_history(
+    session: AsyncSession,
+    *,
+    patient_id: UUID,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    today: date | None = None,
+) -> DoseHistoryResponse:
+    profile = await session.get(PatientProfile, patient_id)
+    timezone_name = profile.timezone if profile else "UTC"
+    timezone = ZoneInfo(timezone_name)
+    local_today = today or datetime.now(timezone).date()
+    effective_end = end_date or local_today
+    effective_start = start_date or effective_end - timedelta(days=29)
+    if effective_start > effective_end:
+        raise ValueError("start_date must be on or before end_date.")
+    if (effective_end - effective_start).days > 365:
+        raise ValueError("History date range cannot exceed 366 days.")
+
+    start_instant = datetime.combine(effective_start, datetime.min.time(), tzinfo=timezone)
+    end_instant = datetime.combine(
+        effective_end + timedelta(days=1),
+        datetime.min.time(),
+        tzinfo=timezone,
+    )
+    result = await session.execute(
+        select(DoseEvent, Medication)
+        .join(
+            Medication,
+            (Medication.id == DoseEvent.medication_id)
+            & (Medication.patient_id == DoseEvent.patient_id),
+        )
+        .where(
+            DoseEvent.patient_id == patient_id,
+            DoseEvent.scheduled_for >= start_instant.astimezone(UTC),
+            DoseEvent.scheduled_for < end_instant.astimezone(UTC),
+        )
+        .order_by(DoseEvent.scheduled_for.desc())
+    )
+    events = [
+        DoseReportResponse(
+            id=event.id,
+            schedule_id=event.schedule_id,
+            medication_id=medication.id,
+            medication_name=medication.name,
+            scheduled_for=_as_utc(event.scheduled_for),
+            status=event.status,
+            reported_at=_as_utc(event.reported_at),
+        )
+        for event, medication in result.all()
+    ]
+    return DoseHistoryResponse(
+        timezone=timezone_name,
+        start_date=effective_start,
+        end_date=effective_end,
+        events=events,
     )
 
 
