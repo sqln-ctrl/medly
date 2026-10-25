@@ -19,6 +19,7 @@ async def create_medication_schedule(
         select(Medication).where(
             Medication.id == medication_id,
             Medication.patient_id == patient_id,
+            Medication.archived_at.is_(None),
         )
     )
     if medication is None:
@@ -60,6 +61,7 @@ async def list_medication_schedules(
         select(Medication.id).where(
             Medication.id == medication_id,
             Medication.patient_id == patient_id,
+            Medication.archived_at.is_(None),
         )
     )
     if medication is None:
@@ -69,6 +71,7 @@ async def list_medication_schedules(
         .where(
             MedicationSchedule.medication_id == medication_id,
             MedicationSchedule.patient_id == patient_id,
+            MedicationSchedule.archived_at.is_(None),
         )
         .order_by(MedicationSchedule.created_at.desc())
     )
@@ -105,6 +108,7 @@ async def confirm_medication_schedule(
         select(MedicationSchedule).where(
             MedicationSchedule.id == schedule_id,
             MedicationSchedule.patient_id == patient_id,
+            MedicationSchedule.archived_at.is_(None),
         )
     )
     if schedule is None:
@@ -116,3 +120,23 @@ async def confirm_medication_schedule(
         schedule.enabled_at = confirmed_at
         await session.commit()
     return schedule
+
+
+async def archive_medication_schedule(
+    session: AsyncSession,
+    *,
+    patient_id: UUID,
+    schedule_id: UUID,
+) -> bool:
+    schedule = await session.scalar(
+        select(MedicationSchedule).where(
+            MedicationSchedule.id == schedule_id,
+            MedicationSchedule.patient_id == patient_id,
+            MedicationSchedule.archived_at.is_(None),
+        )
+    )
+    if schedule is None:
+        return False
+    schedule.archived_at = datetime.now(UTC)
+    await session.commit()
+    return True

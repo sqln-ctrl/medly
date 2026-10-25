@@ -147,6 +147,44 @@ async def test_schedule_routes_enforce_patient_ownership(client: AsyncClient) ->
 
 
 @pytest.mark.asyncio
+async def test_archiving_schedule_removes_it_from_active_schedules(client: AsyncClient) -> None:
+    token = await register_user(client)
+    medication_id = await create_medication(client, token)
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post(
+        f"/medications/{medication_id}/schedules",
+        headers=headers,
+        json={
+            "cadence": "daily",
+            "starts_on": "2026-10-23",
+            "times": [{"day_of_week": -1, "local_time": "08:00:00"}],
+        },
+    )
+    schedule_id = created.json()["id"]
+
+    archived = await client.delete(f"/schedules/{schedule_id}", headers=headers)
+    listed = await client.get(
+        f"/medications/{medication_id}/schedules",
+        headers=headers,
+    )
+    confirmed = await client.post(
+        f"/schedules/{schedule_id}/confirm",
+        headers=headers,
+    )
+    other_token = await register_user(client, email="other@example.com")
+    other_archive = await client.delete(
+        f"/schedules/{schedule_id}",
+        headers={"Authorization": f"Bearer {other_token}"},
+    )
+
+    assert archived.status_code == 204
+    assert listed.status_code == 200
+    assert listed.json() == []
+    assert confirmed.status_code == 404
+    assert other_archive.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_schedule_persists_end_date_and_meal_timing(client: AsyncClient) -> None:
     token = await register_user(client)
     medication_id = await create_medication(client, token)

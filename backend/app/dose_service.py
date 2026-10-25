@@ -47,8 +47,10 @@ async def get_upcoming_doses(
         )
         .where(
             MedicationSchedule.patient_id == patient_id,
+            MedicationSchedule.archived_at.is_(None),
             MedicationSchedule.confirmed_at.is_not(None),
             MedicationSchedule.enabled_at.is_not(None),
+            Medication.archived_at.is_(None),
             MedicationSchedule.starts_on <= end_date,
         )
         .order_by(MedicationSchedule.created_at)
@@ -125,8 +127,10 @@ async def report_dose(
         .where(
             MedicationSchedule.id == payload.schedule_id,
             MedicationSchedule.patient_id == patient_id,
+            MedicationSchedule.archived_at.is_(None),
             MedicationSchedule.confirmed_at.is_not(None),
             MedicationSchedule.enabled_at.is_not(None),
+            Medication.archived_at.is_(None),
         )
     )
     schedule_medication = result.one_or_none()

@@ -47,6 +47,10 @@ Request:
 
 Creates a medication row associated with the current patient. The mobile app sends the medication name and instruction text to this endpoint, then loads the patient's saved medication list from `GET /medications`. Medication instructions are stored as provided and are never rewritten by the backend.
 
+### `DELETE /medications/{medication_id}`
+
+Archives the authenticated patient's medication and all its active schedules. Archived medications are omitted from the medication list and no longer generate upcoming doses or accept new dose reports. Existing schedules and user-reported dose history are retained and remain available in history. Repeating the request or requesting another patient's medication returns `404`.
+
 ## Reminder schedules
 
 Schedules are created disabled. Creating a schedule does not activate reminders; the patient must review and explicitly confirm it using the confirmation endpoint.
@@ -85,6 +89,10 @@ Lists the authenticated patient's schedules for that medication, including wheth
 ### `POST /schedules/{schedule_id}/confirm`
 
 Confirms and enables a pending schedule after the patient has reviewed it. Repeating confirmation is safe and does not change the original confirmation time. Schedule endpoints return `404` when the medication or schedule does not belong to the authenticated patient.
+
+### `DELETE /schedules/{schedule_id}`
+
+Archives the authenticated patient's schedule without deleting its dose reports. The schedule stops producing upcoming doses and cannot receive new reports. Repeating the request or requesting another patient's schedule returns `404`.
 
 These endpoints persist schedule rules and return occurrences; the mobile app can schedule local reminders for upcoming occurrences after the user grants notification permission and enables reminders. Only confirmed and enabled schedules are eligible. Native device reminders can be delivered while the app is closed. Browser reminders require the Medly tab to remain open and may be delayed when the browser suspends the tab. Reminder text does not include medication names or instructions.
 

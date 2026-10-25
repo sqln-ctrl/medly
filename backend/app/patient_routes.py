@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +14,11 @@ from app.patient_schemas import (
     PatientProfileResponse,
     PatientProfileUpdateRequest,
 )
-from app.patient_service import get_or_create_patient_profile, list_medications_for_patient
+from app.patient_service import (
+    archive_medication,
+    get_or_create_patient_profile,
+    list_medications_for_patient,
+)
 
 router = APIRouter(tags=["patients"])
 
@@ -68,3 +72,19 @@ async def create_medication(
     await session.commit()
     await session.refresh(medication)
     return medication
+
+
+@router.delete("/medications/{medication_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_medication(
+    medication_id: UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    archived = await archive_medication(
+        session,
+        patient_id=current_user.id,
+        medication_id=medication_id,
+    )
+    if not archived:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Medication not found.")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

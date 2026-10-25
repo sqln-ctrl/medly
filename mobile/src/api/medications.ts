@@ -80,3 +80,12 @@ export function createMedication(
     }),
   });
 }
+
+export function archiveMedication(
+  accessToken: string,
+  medicationId: string,
+): Promise<void> {
+  return request<void>(`/medications/${medicationId}`, accessToken, {
+    method: 'DELETE',
+  });
+}

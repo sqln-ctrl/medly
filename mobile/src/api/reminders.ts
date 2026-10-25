@@ -167,6 +167,15 @@ export function confirmMedicationSchedule(
   });
 }
 
+export function archiveMedicationSchedule(
+  accessToken: string,
+  scheduleId: string,
+): Promise<void> {
+  return request<void>(`/schedules/${scheduleId}`, accessToken, {
+    method: 'DELETE',
+  });
+}
+
 export function getUpcomingDoses(
   accessToken: string,
   days = 7,

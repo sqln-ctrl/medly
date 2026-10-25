@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth_dependencies import get_current_user
@@ -13,6 +13,7 @@ from app.schedule_schemas import (
 from app.schedule_service import (
     confirm_medication_schedule,
     create_medication_schedule,
+    archive_medication_schedule,
     get_schedule_times,
     list_medication_schedules,
 )
@@ -105,3 +106,19 @@ async def confirm_schedule(
     if schedule is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found.")
     return (await _response_for_schedules(session, [schedule]))[0]
+
+
+@router.delete("/schedules/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_schedule(
+    schedule_id: UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    archived = await archive_medication_schedule(
+        session,
+        patient_id=current_user.id,
+        schedule_id=schedule_id,
+    )
+    if not archived:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found.")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

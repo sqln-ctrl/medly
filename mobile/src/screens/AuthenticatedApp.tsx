@@ -13,12 +13,14 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  archiveMedication,
   createMedication as createMedicationRequest,
   getPatientProfile,
   listMedications,
   Medication,
 } from '../api/medications';
 import {
+  archiveMedicationSchedule,
   confirmMedicationSchedule,
   getDoseAdherence,
   createMedicationSchedule,
@@ -99,6 +101,8 @@ export function AuthenticatedApp({
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [confirmingSchedule, setConfirmingSchedule] = useState(false);
   const [scheduleActionError, setScheduleActionError] = useState<string | null>(null);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archivingItemId, setArchivingItemId] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -279,6 +283,46 @@ export function AuthenticatedApp({
     [accessToken],
   );
 
+  const archiveMedicationEntry = useCallback(
+    async (medicationId: string) => {
+      setArchivingItemId(medicationId);
+      setArchiveError(null);
+      try {
+        await archiveMedication(accessToken, medicationId);
+        setReloadKey((current) => current + 1);
+      } catch (archiveFailure) {
+        setArchiveError(
+          archiveFailure instanceof Error
+            ? archiveFailure.message
+            : 'The medication could not be removed.',
+        );
+      } finally {
+        setArchivingItemId(null);
+      }
+    },
+    [accessToken],
+  );
+
+  const archiveScheduleEntry = useCallback(
+    async (scheduleId: string) => {
+      setArchivingItemId(scheduleId);
+      setArchiveError(null);
+      try {
+        await archiveMedicationSchedule(accessToken, scheduleId);
+        setReloadKey((current) => current + 1);
+      } catch (archiveFailure) {
+        setArchiveError(
+          archiveFailure instanceof Error
+            ? archiveFailure.message
+            : 'The schedule could not be removed.',
+        );
+      } finally {
+        setArchivingItemId(null);
+      }
+    },
+    [accessToken],
+  );
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
@@ -365,6 +409,10 @@ export function AuthenticatedApp({
               onCreateSchedule={(medication) => setScheduleMedication(medication)}
               onReviewSchedule={(entry) => setReviewEntry(entry)}
               onReportDose={saveDoseReport}
+              onArchiveMedication={archiveMedicationEntry}
+              onArchiveSchedule={archiveScheduleEntry}
+              archivingItemId={archivingItemId}
+              archiveError={archiveError}
             />
           )}
         </View>
@@ -506,6 +554,10 @@ function MedicationsScreen({
   onCreateSchedule,
   onReviewSchedule,
   onReportDose,
+  onArchiveMedication,
+  onArchiveSchedule,
+  archivingItemId,
+  archiveError,
 }: {
   medications: Medication[];
   schedules: MedicationScheduleEntry[];
@@ -519,7 +571,14 @@ function MedicationsScreen({
   onCreateSchedule: (medication: Medication) => void;
   onReviewSchedule: (entry: MedicationScheduleEntry) => void;
   onReportDose: (dose: UpcomingDose, status: DoseStatus) => Promise<void>;
+  onArchiveMedication: (medicationId: string) => Promise<void>;
+  onArchiveSchedule: (scheduleId: string) => Promise<void>;
+  archivingItemId: string | null;
+  archiveError: string | null;
 }) {
+  const [confirmMedicationId, setConfirmMedicationId] = useState<string | null>(null);
+  const [confirmScheduleId, setConfirmScheduleId] = useState<string | null>(null);
+
   return (
     <ScrollView contentContainerStyle={styles.pageContent}>
       <Text style={styles.pageEyebrow}>YOUR LIST</Text>
@@ -527,6 +586,11 @@ function MedicationsScreen({
       <Text style={styles.pageSubtitle}>
         Keep medication details and instructions together.
       </Text>
+      {archiveError ? (
+        <View accessibilityRole="alert" style={styles.errorBox}>
+          <Text style={styles.errorText}>{archiveError}</Text>
+        </View>
+      ) : null}
 
       <ActionButton label="＋  Add medication" disabled={loading || Boolean(error)} onPress={onAdd} />
 
@@ -556,7 +620,59 @@ function MedicationsScreen({
                 <Text style={styles.medicationIconText}>M</Text>
               </View>
               <View style={styles.medicationDetails}>
-                <Text style={styles.medicationName}>{medication.name}</Text>
+                <View style={styles.medicationTitleRow}>
+                  <Text style={styles.medicationName}>{medication.name}</Text>
+                  {confirmMedicationId === medication.id ? (
+                    <View style={styles.archiveConfirmation}>
+                      <Text style={styles.archiveWarning}>
+                        Remove this medication and stop its schedules? Dose history will be kept.
+                      </Text>
+                      <View style={styles.archiveActions}>
+                        <Pressable
+                          accessibilityRole="button"
+                          disabled={archivingItemId === medication.id}
+                          onPress={() => {
+                            setConfirmMedicationId(null);
+                            void onArchiveMedication(medication.id);
+                          }}
+                          style={styles.archiveConfirmButton}
+                        >
+                          <Text style={styles.archiveConfirmText}>
+                            {archivingItemId === medication.id
+                              ? 'Removing…'
+                              : 'Remove medication'}
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          accessibilityRole="button"
+                          onPress={() => setConfirmMedicationId(null)}
+                          style={styles.archiveCancelButton}
+                        >
+                          <Text style={styles.archiveCancelText}>Cancel</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ) : (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Remove ${medication.name}`}
+                      onPress={() => {
+                        setConfirmScheduleId(null);
+                        setConfirmMedicationId(medication.id);
+                      }}
+                      style={styles.deleteIconButton}
+                    >
+                      <View style={styles.trashCan}>
+                        <View style={styles.trashLid} />
+                        <View style={styles.trashBody}>
+                          <View style={styles.trashLine} />
+                          <View style={styles.trashLine} />
+                          <View style={styles.trashLine} />
+                        </View>
+                      </View>
+                    </Pressable>
+                  )}
+                </View>
                 <Text style={styles.instructionLabel}>INSTRUCTIONS</Text>
                 <Text style={styles.instructionText}>{medication.instruction_text}</Text>
                 {schedules
@@ -566,17 +682,61 @@ function MedicationsScreen({
                       <Text style={styles.scheduleSummaryText}>
                         {describeSchedule(entry.schedule, timezone ?? 'UTC')}
                       </Text>
-                      {entry.schedule.confirmed_at ? (
-                        <Text style={styles.confirmedText}>Confirmed and active</Text>
-                      ) : (
-                        <Pressable
-                          accessibilityRole="button"
-                          onPress={() => onReviewSchedule(entry)}
-                          style={styles.inlineButton}
-                        >
-                          <Text style={styles.inlineButtonText}>Review and confirm</Text>
-                        </Pressable>
-                      )}
+                      <View style={styles.scheduleActions}>
+                        {entry.schedule.confirmed_at ? (
+                          <Text style={styles.confirmedText}>Confirmed and active</Text>
+                        ) : (
+                          <Pressable
+                            accessibilityRole="button"
+                            onPress={() => onReviewSchedule(entry)}
+                            style={styles.inlineButton}
+                          >
+                            <Text style={styles.inlineButtonText}>Review and confirm</Text>
+                          </Pressable>
+                        )}
+                        {confirmScheduleId === entry.schedule.id ? (
+                          <View style={styles.archiveConfirmation}>
+                            <Text style={styles.archiveWarning}>
+                              Stop this schedule? Its dose history will be kept.
+                            </Text>
+                            <View style={styles.archiveActions}>
+                              <Pressable
+                                accessibilityRole="button"
+                                disabled={archivingItemId === entry.schedule.id}
+                                onPress={() => {
+                                  setConfirmScheduleId(null);
+                                  void onArchiveSchedule(entry.schedule.id);
+                                }}
+                                style={styles.archiveConfirmButton}
+                              >
+                                <Text style={styles.archiveConfirmText}>
+                                  {archivingItemId === entry.schedule.id
+                                    ? 'Removing…'
+                                    : 'Remove schedule'}
+                                </Text>
+                              </Pressable>
+                              <Pressable
+                                accessibilityRole="button"
+                                onPress={() => setConfirmScheduleId(null)}
+                                style={styles.archiveCancelButton}
+                              >
+                                <Text style={styles.archiveCancelText}>Cancel</Text>
+                              </Pressable>
+                            </View>
+                          </View>
+                        ) : (
+                          <Pressable
+                            accessibilityRole="button"
+                            onPress={() => {
+                              setConfirmMedicationId(null);
+                              setConfirmScheduleId(entry.schedule.id);
+                            }}
+                            style={styles.inlineButton}
+                          >
+                            <Text style={styles.archiveLinkText}>Remove schedule</Text>
+                          </Pressable>
+                        )}
+                      </View>
                     </View>
                   ))}
                 <Pressable
@@ -1828,11 +1988,104 @@ const styles = StyleSheet.create({
   medicationDetails: {
     flex: 1,
   },
+  medicationTitleRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'space-between',
+  },
+  deleteIconButton: {
+    alignItems: 'center',
+    backgroundColor: '#fff1f2',
+    borderRadius: 18,
+    height: 36,
+    justifyContent: 'center',
+    marginTop: -5,
+    width: 36,
+  },
+  trashCan: {
+    alignItems: 'center',
+    height: 22,
+    justifyContent: 'flex-end',
+    width: 20,
+  },
+  trashLid: {
+    backgroundColor: '#b91c1c',
+    borderRadius: 1,
+    height: 2,
+    marginBottom: 2,
+    width: 16,
+  },
+  trashBody: {
+    alignItems: 'center',
+    borderBottomColor: '#b91c1c',
+    borderBottomLeftRadius: 3,
+    borderBottomRightRadius: 3,
+    borderColor: '#b91c1c',
+    borderTopWidth: 0,
+    borderWidth: 2,
+    flexDirection: 'row',
+    gap: 2,
+    height: 15,
+    justifyContent: 'center',
+    width: 13,
+  },
+  trashLine: {
+    backgroundColor: '#b91c1c',
+    borderRadius: 1,
+    height: 8,
+    width: 1,
+  },
   scheduleSummary: {
     borderTopColor: '#e8edf4',
     borderTopWidth: 1,
     marginTop: 14,
     paddingTop: 12,
+  },
+  scheduleActions: {
+    alignItems: 'flex-start',
+  },
+  archiveConfirmation: {
+    alignSelf: 'stretch',
+    backgroundColor: '#fff7ed',
+    borderColor: '#fed7aa',
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 8,
+    padding: 10,
+  },
+  archiveWarning: {
+    color: '#7c2d12',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  archiveActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 7,
+  },
+  archiveConfirmButton: {
+    paddingVertical: 6,
+  },
+  archiveConfirmText: {
+    color: '#b91c1c',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  archiveCancelButton: {
+    paddingVertical: 6,
+  },
+  archiveCancelText: {
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  archiveLinkText: {
+    color: '#b91c1c',
+    fontSize: 13,
+    fontWeight: '600',
   },
   scheduleSummaryText: {
     color: '#475569',
