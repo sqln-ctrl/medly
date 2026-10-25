@@ -149,6 +149,7 @@ class ScheduleTime(Base):
     )
     day_of_week: Mapped[int] = mapped_column(Integer, nullable=False, default=-1)
     local_time: Mapped[time] = mapped_column(Time, nullable=False)
+    meal_timing: Mapped[str | None] = mapped_column(String(32))
 
 
 class DoseEvent(Base):

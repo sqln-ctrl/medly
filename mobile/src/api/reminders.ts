@@ -3,6 +3,14 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:8
 export type ScheduleTime = {
   day_of_week: number;
   local_time: string;
+  meal_timing?:
+    | 'before_breakfast'
+    | 'after_breakfast'
+    | 'before_lunch'
+    | 'after_lunch'
+    | 'before_dinner'
+    | 'after_dinner'
+    | null;
 };
 
 export type MedicationSchedule = {
@@ -135,6 +143,7 @@ export function createMedicationSchedule(
   schedule: {
     cadence: MedicationSchedule['cadence'];
     starts_on: string;
+    ends_on?: string | null;
     interval_days?: number;
     times: ScheduleTime[];
   },

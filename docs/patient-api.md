@@ -59,16 +59,24 @@ Creates a pending schedule for one of the authenticated patient's medications.
 {
   "cadence": "weekly",
   "starts_on": "2026-10-23",
-  "ends_on": null,
+  "ends_on": "2026-12-31",
   "interval_days": null,
   "times": [
-    { "day_of_week": 0, "local_time": "08:30:00" },
-    { "day_of_week": 2, "local_time": "08:30:00" }
+    {
+      "day_of_week": 0,
+      "local_time": "08:30:00",
+      "meal_timing": "before_breakfast"
+    },
+    {
+      "day_of_week": 2,
+      "local_time": "12:30:00",
+      "meal_timing": null
+    }
   ]
 }
 ```
 
-Cadence is `daily`, `weekly`, or `interval`. Daily and interval times use `day_of_week: -1`; weekly times use `0` for Monday through `6` for Sunday. Interval schedules require a positive `interval_days` value, and the interval is anchored to `starts_on`. Schedule dates and wall-clock times are interpreted in the patient's profile timezone. The response includes `confirmed_at` and `enabled_at`, both initially `null`.
+Cadence is `daily`, `weekly`, or `interval`. Daily and interval times use `day_of_week: -1`; weekly times use `0` for Monday through `6` for Sunday. Schedules accept one to three times per scheduled day. `ends_on` is optional and inclusive; omit it or pass `null` for no end date. Interval schedules require a positive `interval_days` value, and the interval is anchored to `starts_on`. Schedule dates and wall-clock times are interpreted in the patient's profile timezone. `meal_timing` is an optional patient-selected label: `before_breakfast`, `after_breakfast`, `before_lunch`, `after_lunch`, `before_dinner`, or `after_dinner`. It does not change the scheduled time or medication instructions. The response includes `confirmed_at` and `enabled_at`, both initially `null`.
 
 ### `GET /medications/{medication_id}/schedules`
 

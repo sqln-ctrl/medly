@@ -93,7 +93,9 @@ async def test_schedule_requires_confirmation_before_enablement(client: AsyncCli
     schedule = created.json()
     assert schedule["confirmed_at"] is None
     assert schedule["enabled_at"] is None
-    assert schedule["times"] == [{"day_of_week": -1, "local_time": "08:30:00"}]
+    assert schedule["times"] == [
+        {"day_of_week": -1, "local_time": "08:30:00", "meal_timing": None}
+    ]
 
     confirmed = await client.post(
         f"/schedules/{schedule['id']}/confirm",
@@ -145,6 +147,45 @@ async def test_schedule_routes_enforce_patient_ownership(client: AsyncClient) ->
 
 
 @pytest.mark.asyncio
+async def test_schedule_persists_end_date_and_meal_timing(client: AsyncClient) -> None:
+    token = await register_user(client)
+    medication_id = await create_medication(client, token)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = await client.post(
+        f"/medications/{medication_id}/schedules",
+        headers=headers,
+        json={
+            "cadence": "daily",
+            "starts_on": "2026-10-23",
+            "ends_on": "2026-11-30",
+            "times": [
+                {
+                    "day_of_week": -1,
+                    "local_time": "08:30:00",
+                    "meal_timing": "before_breakfast",
+                },
+                {
+                    "day_of_week": -1,
+                    "local_time": "12:30:00",
+                    "meal_timing": "after_lunch",
+                },
+                {"day_of_week": -1, "local_time": "18:30:00"},
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    schedule = response.json()
+    assert schedule["ends_on"] == "2026-11-30"
+    assert [item["meal_timing"] for item in schedule["times"]] == [
+        "before_breakfast",
+        "after_lunch",
+        None,
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "payload",
     [
@@ -168,6 +209,27 @@ async def test_schedule_routes_enforce_patient_ownership(client: AsyncClient) ->
             "cadence": "daily",
             "starts_on": "2026-10-23",
             "times": [{"day_of_week": -1, "local_time": "08:30:00+02:00"}],
+        },
+        {
+            "cadence": "daily",
+            "starts_on": "2026-10-23",
+            "times": [
+                {"day_of_week": -1, "local_time": "08:00:00"},
+                {"day_of_week": -1, "local_time": "12:00:00"},
+                {"day_of_week": -1, "local_time": "16:00:00"},
+                {"day_of_week": -1, "local_time": "20:00:00"},
+            ],
+        },
+        {
+            "cadence": "daily",
+            "starts_on": "2026-10-23",
+            "times": [
+                {
+                    "day_of_week": -1,
+                    "local_time": "08:00:00",
+                    "meal_timing": "with_breakfast",
+                }
+            ],
         },
     ],
 )
@@ -233,6 +295,27 @@ def test_schedule_occurrences_follow_weekly_and_interval_rules() -> None:
         date(2026, 10, 26),
         date(2026, 10, 29),
         date(2026, 11, 1),
+    ]
+
+
+def test_schedule_end_date_is_inclusive() -> None:
+    schedule = MedicationSchedule(
+        cadence="daily",
+        starts_on=date(2026, 10, 26),
+        ends_on=date(2026, 10, 27),
+        interval_days=None,
+    )
+    occurrences = schedule_occurrences(
+        schedule,
+        [ScheduleTime(day_of_week=-1, local_time=time(8))],
+        timezone=ZoneInfo("UTC"),
+        start_date=date(2026, 10, 26),
+        end_date=date(2026, 10, 29),
+    )
+
+    assert [occurrence.date() for occurrence in occurrences] == [
+        date(2026, 10, 26),
+        date(2026, 10, 27),
     ]
 
 

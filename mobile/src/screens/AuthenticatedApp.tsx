@@ -49,8 +49,22 @@ type Tab = 'today' | 'medications' | 'history';
 type ScheduleDraft = {
   cadence: MedicationSchedule['cadence'];
   starts_on: string;
+  ends_on: string | null;
   interval_days?: number;
-  times: { day_of_week: number; local_time: string }[];
+  times: {
+    day_of_week: number;
+    local_time: string;
+    meal_timing: ScheduleTime['meal_timing'];
+  }[];
+};
+
+type ScheduleTime = MedicationSchedule['times'][number];
+
+type TimeDraft = {
+  hour: string;
+  minute: string;
+  period: 'AM' | 'PM';
+  mealTiming: ScheduleTime['meal_timing'] | 'not_specified' | null;
 };
 
 type MedicationScheduleEntry = {
@@ -707,24 +721,66 @@ function ScheduleForm({
 }) {
   const [cadence, setCadence] = useState<MedicationSchedule['cadence']>('daily');
   const [startsOn, setStartsOn] = useState(todayInTimezone(timezone));
-  const [localTimes, setLocalTimes] = useState(['08:00']);
+  const [hasEndDate, setHasEndDate] = useState(false);
+  const [endsOn, setEndsOn] = useState(todayInTimezone(timezone));
+  const [timesPerDay, setTimesPerDay] = useState(1);
+  const [doseTimes, setDoseTimes] = useState<TimeDraft[]>([
+    { hour: '', minute: '00', period: 'AM', mealTiming: null },
+  ]);
   const [intervalDays, setIntervalDays] = useState('2');
   const [weekdays, setWeekdays] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
   const weekdayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const mealTimingOptions: {
+    value: TimeDraft['mealTiming'];
+    label: string;
+  }[] = [
+    { value: 'not_specified', label: 'Not specified' },
+    { value: 'before_breakfast', label: 'Before breakfast' },
+    { value: 'after_breakfast', label: 'After breakfast' },
+    { value: 'before_lunch', label: 'Before lunch' },
+    { value: 'after_lunch', label: 'After lunch' },
+    { value: 'before_dinner', label: 'Before dinner' },
+    { value: 'after_dinner', label: 'After dinner' },
+  ];
 
   const save = async () => {
     if (saving) {
       return;
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(startsOn)) {
-      setError('Enter a start date in YYYY-MM-DD format.');
+    if (!isValidDateString(startsOn)) {
+      setError('Choose a valid start date.');
       return;
     }
-    if (localTimes.some((value) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(value))) {
-      setError('Enter each local time in 24-hour HH:MM format.');
+    if (hasEndDate && !isValidDateString(endsOn)) {
+      setError('Choose a valid end date.');
       return;
     }
+    if (hasEndDate && endsOn < startsOn) {
+      setError('The end date must be on or after the start date.');
+      return;
+    }
+    if (doseTimes.length !== timesPerDay) {
+      setError('Add a time for each scheduled dose.');
+      return;
+    }
+    if (
+      doseTimes.some(
+        ({ hour, minute }) =>
+          !/^(0?[1-9]|1[0-2])$/.test(hour) || !/^\d{2}$/.test(minute) || Number(minute) > 59,
+      )
+    ) {
+      setError('Enter a valid time for each dose using a 1–12 hour and 00–59 minutes.');
+      return;
+    }
+    if (doseTimes.some((time) => time.mealTiming === null)) {
+      setError('Choose a meal timing or “Not specified” for each dose.');
+      return;
+    }
+    const localTimes = doseTimes.map(({ hour, minute, period }) => {
+      const hourNumber = Number(hour) % 12 + (period === 'PM' ? 12 : 0);
+      return `${String(hourNumber).padStart(2, '0')}:${minute}`;
+    });
     if (new Set(localTimes).size !== localTimes.length) {
       setError('Reminder times must be unique.');
       return;
@@ -746,11 +802,16 @@ function ScheduleForm({
       await onSave({
         cadence,
         starts_on: startsOn,
+        ends_on: hasEndDate ? endsOn : null,
         ...(cadence === 'interval' ? { interval_days: parsedInterval } : {}),
         times: (cadence === 'weekly' ? weekdays : [-1]).flatMap((dayOfWeek) =>
-          localTimes.map((value) => ({
+          localTimes.map((value, index) => ({
             day_of_week: dayOfWeek,
             local_time: `${value}:00`,
+            meal_timing:
+              doseTimes[index].mealTiming === 'not_specified'
+                ? null
+                : doseTimes[index].mealTiming,
           })),
         ),
       });
@@ -838,54 +899,178 @@ function ScheduleForm({
           </>
         ) : null}
 
-        <Text style={styles.inputLabel}>Start date</Text>
-        <TextInput
-          accessibilityLabel="Schedule start date"
-          onChangeText={setStartsOn}
-          placeholder="YYYY-MM-DD"
-          style={styles.input}
-          value={startsOn}
-        />
+        <CalendarDatePicker label="Start date" value={startsOn} onChange={setStartsOn} />
 
-        <Text style={styles.inputLabel}>Scheduled dose times</Text>
-        {localTimes.map((value, index) => (
-          <View key={`local-time-${index}`} style={styles.timeInputRow}>
-            <TextInput
-              accessibilityLabel={`Scheduled dose time ${index + 1}`}
-              onChangeText={(nextValue) =>
-                setLocalTimes((current) =>
-                  current.map((currentValue, currentIndex) =>
-                    currentIndex === index ? nextValue : currentValue,
-                  ),
-                )
-              }
-              placeholder="HH:MM"
-              style={[styles.input, styles.timeInput]}
-              value={value}
-            />
-            {localTimes.length > 1 ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Remove time ${index + 1}`}
-                onPress={() =>
-                  setLocalTimes((current) => current.filter((_, currentIndex) => currentIndex !== index))
-                }
-                style={styles.removeTimeButton}
+        <Text style={styles.inputLabel}>End date</Text>
+        <View style={styles.choiceRow}>
+          {[
+            { value: false, label: 'No end date' },
+            { value: true, label: 'Choose end date' },
+          ].map((option) => (
+            <Pressable
+              key={option.label}
+              accessibilityRole="button"
+              accessibilityState={{ selected: hasEndDate === option.value }}
+              onPress={() => setHasEndDate(option.value)}
+              style={[
+                styles.choiceButton,
+                hasEndDate === option.value && styles.selectedChoiceButton,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.choiceText,
+                  hasEndDate === option.value && styles.selectedChoiceText,
+                ]}
               >
-                <Text style={styles.cancelText}>Remove</Text>
-              </Pressable>
-            ) : null}
+                {option.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        {hasEndDate ? (
+          <CalendarDatePicker label="Custom end date" value={endsOn} onChange={setEndsOn} />
+        ) : null}
+
+        <Text style={styles.inputLabel}>How many times per day?</Text>
+        <View style={styles.choiceRow}>
+          {[1, 2, 3].map((count) => (
+            <Pressable
+              key={count}
+              accessibilityRole="button"
+              accessibilityState={{ selected: timesPerDay === count }}
+              onPress={() => {
+                setTimesPerDay(count);
+                setDoseTimes((current) =>
+                  Array.from({ length: count }, (_, index) =>
+                    current[index] ?? {
+                      hour: '',
+                      minute: '00',
+                      period: 'AM',
+                      mealTiming: null,
+                    },
+                  ),
+                );
+              }}
+              style={[
+                styles.choiceButton,
+                timesPerDay === count && styles.selectedChoiceButton,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.choiceText,
+                  timesPerDay === count && styles.selectedChoiceText,
+                ]}
+              >
+                {count} {count === 1 ? 'time' : 'times'}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <Text style={styles.inputLabel}>Dose times and meal timing</Text>
+        {doseTimes.map((doseTime, index) => (
+          <View key={`dose-time-${index}`} style={styles.doseTimeCard}>
+            <Text style={styles.cardTitle}>Dose {index + 1}</Text>
+            <View style={styles.timeInputRow}>
+              <TextInput
+                accessibilityLabel={`Dose ${index + 1} hour`}
+                keyboardType="number-pad"
+                maxLength={2}
+                onChangeText={(hour) =>
+                  setDoseTimes((current) =>
+                    current.map((item, itemIndex) =>
+                      itemIndex === index ? { ...item, hour } : item,
+                    ),
+                  )
+                }
+                placeholder="Hour"
+                style={[styles.input, styles.clockInput]}
+                value={doseTime.hour}
+              />
+              <Text style={styles.timeSeparator}>:</Text>
+              <TextInput
+                accessibilityLabel={`Dose ${index + 1} minute`}
+                keyboardType="number-pad"
+                maxLength={2}
+                onChangeText={(minute) =>
+                  setDoseTimes((current) =>
+                    current.map((item, itemIndex) =>
+                      itemIndex === index ? { ...item, minute } : item,
+                    ),
+                  )
+                }
+                placeholder="MM"
+                style={[styles.input, styles.clockInput]}
+                value={doseTime.minute}
+              />
+              <View style={styles.periodChoices}>
+                {(['AM', 'PM'] as const).map((period) => (
+                  <Pressable
+                    key={period}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: doseTime.period === period }}
+                    onPress={() =>
+                      setDoseTimes((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, period } : item,
+                        ),
+                      )
+                    }
+                    style={[
+                      styles.periodButton,
+                      doseTime.period === period && styles.selectedChoiceButton,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.choiceText,
+                        doseTime.period === period && styles.selectedChoiceText,
+                      ]}
+                    >
+                      {period}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+            <Text style={styles.mealQuestion}>Before or after which meal?</Text>
+            <View style={styles.mealChoices}>
+              {mealTimingOptions.map((option) => (
+                <Pressable
+                  key={option.label}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: doseTime.mealTiming === option.value }}
+                  onPress={() =>
+                    setDoseTimes((current) =>
+                      current.map((item, itemIndex) =>
+                        itemIndex === index
+                          ? { ...item, mealTiming: option.value }
+                          : item,
+                      ),
+                    )
+                  }
+                  style={[
+                    styles.mealButton,
+                    doseTime.mealTiming === option.value && styles.selectedChoiceButton,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.choiceText,
+                      doseTime.mealTiming === option.value && styles.selectedChoiceText,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
           </View>
         ))}
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => setLocalTimes((current) => [...current, '08:00'])}
-          style={styles.inlineButton}
-        >
-          <Text style={styles.inlineButtonText}>＋ Add another time</Text>
-        </Pressable>
         <Text style={styles.formNote}>
-          This schedule is not active yet. Review and confirm it on the next screen to enable dose tracking. Browser and device notifications are not available yet.
+          Choose the times and meal notes from the instructions you were given. Medly does not infer or change medication instructions. Review and confirm this schedule before it becomes active.
         </Text>
         {error ? (
           <View accessibilityRole="alert" style={styles.errorBox}>
@@ -907,6 +1092,126 @@ function ScheduleForm({
         </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
+  );
+}
+
+function CalendarDatePicker({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (date: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [visibleMonth, setVisibleMonth] = useState(() => {
+    const [year, month] = value.split('-').map(Number);
+    return new Date(year, month - 1, 1);
+  });
+  const monthLabel = visibleMonth.toLocaleDateString(undefined, {
+    month: 'long',
+    year: 'numeric',
+  });
+  const firstWeekday = (visibleMonth.getDay() + 6) % 7;
+  const daysInMonth = new Date(
+    visibleMonth.getFullYear(),
+    visibleMonth.getMonth() + 1,
+    0,
+  ).getDate();
+  const calendarDays = [
+    ...Array.from({ length: firstWeekday }, () => null),
+    ...Array.from({ length: daysInMonth }, (_, index) => index + 1),
+  ];
+  while (calendarDays.length % 7 !== 0) {
+    calendarDays.push(null);
+  }
+
+  return (
+    <View>
+      <Text style={styles.inputLabel}>{label}</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${label}: ${formatDateForDisplay(value)}`}
+        accessibilityState={{ expanded: open }}
+        onPress={() => setOpen((current) => !current)}
+        style={styles.datePickerButton}
+      >
+        <Text style={styles.datePickerText}>▦  {formatDateForDisplay(value)}</Text>
+      </Pressable>
+      {open ? (
+        <View style={styles.calendar}>
+          <View style={styles.calendarHeader}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Previous month"
+              onPress={() =>
+                setVisibleMonth(
+                  (current) => new Date(current.getFullYear(), current.getMonth() - 1, 1),
+                )
+              }
+              style={styles.calendarNavButton}
+            >
+              <Text style={styles.calendarNavText}>‹</Text>
+            </Pressable>
+            <Text style={styles.calendarMonth}>{monthLabel}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Next month"
+              onPress={() =>
+                setVisibleMonth(
+                  (current) => new Date(current.getFullYear(), current.getMonth() + 1, 1),
+                )
+              }
+              style={styles.calendarNavButton}
+            >
+              <Text style={styles.calendarNavText}>›</Text>
+            </Pressable>
+          </View>
+          <View style={styles.calendarGrid}>
+            {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, index) => (
+              <Text key={`${day}-${index}`} style={styles.calendarWeekday}>
+                {day}
+              </Text>
+            ))}
+            {calendarDays.map((day, index) => {
+              if (day === null) {
+                return <View key={`blank-${index}`} style={styles.calendarDay} />;
+              }
+              const date = `${visibleMonth.getFullYear()}-${String(
+                visibleMonth.getMonth() + 1,
+              ).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+              const selected = value === date;
+              return (
+                <Pressable
+                  key={date}
+                  accessibilityRole="button"
+                  accessibilityLabel={formatDateForDisplay(date)}
+                  accessibilityState={{ selected }}
+                  onPress={() => {
+                    onChange(date);
+                    setOpen(false);
+                  }}
+                  style={[
+                    styles.calendarDay,
+                    selected && styles.calendarSelectedDay,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.calendarDayText,
+                      selected && styles.calendarSelectedDayText,
+                    ]}
+                  >
+                    {day}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -941,7 +1246,7 @@ function ScheduleReview({
         <Text style={styles.instructionText}>{entry.medication.instruction_text}</Text>
       </View>
       <Text style={styles.formNote}>
-        Confirming activates this schedule for dose tracking. Browser and device notifications are not available yet. You can go back without activating it.
+        Confirming activates this schedule for dose tracking. You can go back without activating it.
       </Text>
       {error ? (
         <View accessibilityRole="alert" style={styles.errorBox}>
@@ -1200,6 +1505,28 @@ function todayInTimezone(timezone: string): string {
   return localDateFor(new Date().toISOString(), timezone);
 }
 
+function isValidDateString(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const [year, month, day] = value.split('-').map(Number);
+  const parsed = new Date(year, month - 1, day);
+  return (
+    parsed.getFullYear() === year &&
+    parsed.getMonth() === month - 1 &&
+    parsed.getDate() === day
+  );
+}
+
+function formatDateForDisplay(value: string): string {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
 function formatDoseDateTime(value: string, timezone: string): string {
   return new Intl.DateTimeFormat(undefined, {
     timeZone: timezone,
@@ -1214,11 +1541,16 @@ function formatDoseDateTime(value: string, timezone: string): string {
 function describeSchedule(schedule: MedicationSchedule, timezone: string): string {
   const timeSummary = schedule.times
     .map((item) => {
-      const timeLabel = item.local_time.slice(0, 5);
+      const [hourValue, minute] = item.local_time.slice(0, 5).split(':').map(Number);
+      const period = hourValue >= 12 ? 'PM' : 'AM';
+      const timeLabel = `${hourValue % 12 || 12}:${String(minute).padStart(2, '0')} ${period}`;
+      const mealTiming = item.meal_timing
+        ? ` · ${item.meal_timing.replaceAll('_', ' ')}`
+        : '';
       if (schedule.cadence === 'weekly') {
-        return `${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][item.day_of_week]} ${timeLabel}`;
+        return `${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][item.day_of_week]} ${timeLabel}${mealTiming}`;
       }
-      return timeLabel;
+      return `${timeLabel}${mealTiming}`;
     })
     .join(', ');
   const recurrence =
@@ -1227,7 +1559,10 @@ function describeSchedule(schedule: MedicationSchedule, timezone: string): strin
       : schedule.cadence === 'weekly'
         ? 'Weekly'
         : 'Daily';
-  return `${recurrence} · starts ${schedule.starts_on} · ${timeSummary} (${timezone})`;
+  const dateRange = schedule.ends_on
+    ? `${schedule.starts_on} to ${schedule.ends_on}`
+    : `${schedule.starts_on} · no end date`;
+  return `${recurrence} · ${dateRange} · ${timeSummary} (${timezone})`;
 }
 
 function TabButton({
@@ -1534,8 +1869,131 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 8,
   },
-  timeInput: {
+  doseTimeCard: {
+    backgroundColor: '#ffffff',
+    borderColor: '#e2e8f0',
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 12,
+    padding: 14,
+  },
+  clockInput: {
     flex: 1,
+    minWidth: 52,
+    paddingHorizontal: 8,
+    textAlign: 'center',
+  },
+  timeSeparator: {
+    color: '#334155',
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  periodChoices: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  periodButton: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 42,
+    paddingHorizontal: 9,
+  },
+  mealQuestion: {
+    color: '#334155',
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 8,
+    marginTop: 6,
+  },
+  mealChoices: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+  },
+  mealButton: {
+    backgroundColor: '#ffffff',
+    borderColor: '#cbd5e1',
+    borderRadius: 9,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 38,
+    paddingHorizontal: 10,
+  },
+  datePickerButton: {
+    backgroundColor: '#ffffff',
+    borderColor: '#cbd5e1',
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 50,
+    paddingHorizontal: 14,
+  },
+  datePickerText: {
+    color: '#0f172a',
+    fontSize: 15,
+  },
+  calendar: {
+    backgroundColor: '#ffffff',
+    borderColor: '#cbd5e1',
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 8,
+    padding: 10,
+  },
+  calendarHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  calendarNavButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 40,
+    minWidth: 40,
+  },
+  calendarNavText: {
+    color: '#1d4ed8',
+    fontSize: 26,
+  },
+  calendarMonth: {
+    color: '#0f172a',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  calendarWeekday: {
+    color: '#64748b',
+    fontSize: 12,
+    fontWeight: '700',
+    paddingVertical: 8,
+    textAlign: 'center',
+    width: '14.2857%',
+  },
+  calendarDay: {
+    alignItems: 'center',
+    borderRadius: 20,
+    height: 40,
+    justifyContent: 'center',
+    width: '14.2857%',
+  },
+  calendarSelectedDay: {
+    backgroundColor: '#1d4ed8',
+  },
+  calendarDayText: {
+    color: '#334155',
+    fontSize: 14,
+  },
+  calendarSelectedDayText: {
+    color: '#ffffff',
+    fontWeight: '700',
   },
   removeTimeButton: {
     justifyContent: 'center',

@@ -1,3 +1,4 @@
+from collections import Counter
 from datetime import date, datetime, time
 from typing import Literal
 from uuid import UUID
@@ -5,6 +6,14 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Cadence = Literal["daily", "weekly", "interval"]
+MealTiming = Literal[
+    "before_breakfast",
+    "after_breakfast",
+    "before_lunch",
+    "after_lunch",
+    "before_dinner",
+    "after_dinner",
+]
 
 
 class ScheduleTimeInput(BaseModel):
@@ -12,6 +21,7 @@ class ScheduleTimeInput(BaseModel):
 
     day_of_week: int = Field(ge=-1, le=6)
     local_time: time
+    meal_timing: MealTiming | None = None
 
     @field_validator("local_time")
     @classmethod
@@ -28,7 +38,7 @@ class MedicationScheduleCreateRequest(BaseModel):
     starts_on: date
     ends_on: date | None = None
     interval_days: int | None = Field(default=None, ge=1)
-    times: list[ScheduleTimeInput] = Field(min_length=1, max_length=100)
+    times: list[ScheduleTimeInput] = Field(min_length=1, max_length=21)
 
     @model_validator(mode="after")
     def validate_recurrence(self) -> "MedicationScheduleCreateRequest":
@@ -57,6 +67,8 @@ class MedicationScheduleCreateRequest(BaseModel):
             }
         ) != len(self.times):
             raise ValueError("Schedule times must be unique.")
+        if any(count > 3 for count in Counter(item.day_of_week for item in self.times).values()):
+            raise ValueError("Schedules support at most three dose times per day.")
         return self
 
 
@@ -65,6 +77,7 @@ class ScheduleTimeResponse(BaseModel):
 
     day_of_week: int
     local_time: time
+    meal_timing: MealTiming | None = None
 
 
 class MedicationScheduleResponse(BaseModel):

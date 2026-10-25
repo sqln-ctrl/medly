@@ -41,6 +41,7 @@ async def create_medication_schedule(
                 schedule_id=schedule.id,
                 day_of_week=schedule_time.day_of_week,
                 local_time=schedule_time.local_time,
+                meal_timing=schedule_time.meal_timing,
             )
             for schedule_time in payload.times
         ]
