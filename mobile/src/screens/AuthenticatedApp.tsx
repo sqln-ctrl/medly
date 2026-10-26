@@ -19,6 +19,7 @@ import {
   listMedications,
   Medication,
 } from '../api/medications';
+import { PrescriptionImportScreen } from './PrescriptionImportScreen';
 import {
   archiveMedicationSchedule,
   confirmMedicationSchedule,
@@ -89,6 +90,7 @@ export function AuthenticatedApp({
   const [doseAdherence, setDoseAdherence] = useState<DoseAdherence | null>(null);
   const [patientTimezone, setPatientTimezone] = useState<string | null>(null);
   const [addingMedication, setAddingMedication] = useState(false);
+  const [importingPrescription, setImportingPrescription] = useState(false);
   const [scheduleMedication, setScheduleMedication] = useState<Medication | null>(null);
   const [reviewEntry, setReviewEntry] = useState<MedicationScheduleEntry | null>(null);
   const [loadingMedications, setLoadingMedications] = useState(true);
@@ -369,6 +371,21 @@ export function AuthenticatedApp({
               onCancel={() => setReviewEntry(null)}
               onConfirm={() => void confirmSchedule(reviewEntry)}
             />
+          ) : importingPrescription ? (
+            <PrescriptionImportScreen
+              accessToken={accessToken}
+              timezone={patientTimezone ?? 'UTC'}
+              onCancel={() => setImportingPrescription(false)}
+              onMedicationSaved={(medication) =>
+                setMedications((current) => [medication, ...current])
+              }
+              onComplete={(medication, schedule) => {
+                const entry = { medication, schedule };
+                setSchedules((current) => [entry, ...current]);
+                setImportingPrescription(false);
+                setReviewEntry(entry);
+              }}
+            />
           ) : tab === 'history' ? (
             <DoseHistoryScreen
               history={doseHistory}
@@ -402,9 +419,11 @@ export function AuthenticatedApp({
               loading={loadingMedications}
               onRetry={() => setReloadKey((current) => current + 1)}
               onAdd={() => setAddingMedication(true)}
+              onImportPrescription={() => setImportingPrescription(true)}
               schedules={schedules}
               timezone={patientTimezone}
               scheduleEnabled={patientTimezone !== null}
+              importEnabled={patientTimezone !== null}
               timezoneError={timezoneError}
               onCreateSchedule={(medication) => setScheduleMedication(medication)}
               onReviewSchedule={(entry) => setReviewEntry(entry)}
@@ -417,7 +436,7 @@ export function AuthenticatedApp({
           )}
         </View>
 
-        {!addingMedication && !scheduleMedication && !reviewEntry ? (
+        {!addingMedication && !scheduleMedication && !reviewEntry && !importingPrescription ? (
           <View accessibilityRole="tablist" style={styles.tabBar}>
             <TabButton
               label="Today"
@@ -549,11 +568,13 @@ function MedicationsScreen({
   schedules,
   timezone,
   scheduleEnabled,
+  importEnabled,
   timezoneError,
   error,
   loading,
   onRetry,
   onAdd,
+  onImportPrescription,
   onCreateSchedule,
   onReviewSchedule,
   onReportDose,
@@ -566,11 +587,13 @@ function MedicationsScreen({
   schedules: MedicationScheduleEntry[];
   timezone: string | null;
   scheduleEnabled: boolean;
+  importEnabled: boolean;
   timezoneError: string | null;
   error: string | null;
   loading: boolean;
   onRetry: () => void;
   onAdd: () => void;
+  onImportPrescription: () => void;
   onCreateSchedule: (medication: Medication) => void;
   onReviewSchedule: (entry: MedicationScheduleEntry) => void;
   onReportDose: (dose: UpcomingDose, status: DoseStatus) => Promise<void>;
@@ -595,7 +618,16 @@ function MedicationsScreen({
         </View>
       ) : null}
 
-      <ActionButton label="＋  Add medication" disabled={loading || Boolean(error)} onPress={onAdd} />
+      <ActionButton
+        label="Scan prescription"
+        disabled={loading || Boolean(error) || !importEnabled}
+        onPress={onImportPrescription}
+      />
+      <ActionButton
+        label="＋  Add medication"
+        disabled={loading || Boolean(error)}
+        onPress={onAdd}
+      />
 
       {loading ? (
         <View style={styles.infoCard}>

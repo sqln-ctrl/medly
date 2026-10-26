@@ -20,7 +20,15 @@
     "plugins": [
       "expo-status-bar",
       "expo-secure-store",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Medly uses your photo library to read a prescription on this device.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ]
     ]
   }
 }
